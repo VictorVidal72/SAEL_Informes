@@ -10,23 +10,24 @@ if (!supabaseUrl || !supabaseAnonKey) {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export interface AyuntamientoRow {
-  id: number;
+  id: string;
   nombre: string;
-  cif: string;
+  cif: string | null;
   comarca: string | null;
   codigo_postal: string | null;
-  poblacion: string | null;
+  poblacion: number | null;
   direccion_sede: string | null;
   web_dominio: string | null;
   email_generico: string | null;
   gentilicio: string | null;
   created_at: string;
+  codigo_dir3: string | null;
 }
 
 export interface ContactoRow {
-  id: number;
-  ayuntamiento_id: number;
-  nombre_completo: string;
+  id: string;
+  ayuntamiento_id: string | null;
+  nombre_completo: string | null;
   cargo: string | null;
   partido_politico: string | null;
   email: string | null;
@@ -37,12 +38,17 @@ export interface ContactoRow {
 }
 
 export interface ExpedienteRow {
-  id: number;
-  ayuntamiento_id: number;
+  id: string;
+  ayuntamiento_id: string | null;
   num_expediente_sael: string | null;
   num_expediente_rcon: string | null;
   fecha_solicitud: string | null;
   fecha_resolucion: string | null;
   estado: string | null;
   created_at: string;
+  num_informe: string | null;
+  num_expediente_externo: string | null;
+  asunto: string | null;
+  tipo_procedimiento: string | null;
+  medio_solicitud: string | null;
 }

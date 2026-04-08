@@ -2,9 +2,12 @@ import type { AyuntamientoRow, ContactoRow, ExpedienteRow } from './supabase';
 
 export const DEFAULT_LOGO_URL = '/Diputacion.png';
 
+export type TramiteType = 'requerimiento_ctpda' | 'peticion_general';
+
 export type DbManagedField =
   | 'municipio'
   | 'cif'
+  | 'codigoDir3'
   | 'direccion'
   | 'tratamiento'
   | 'nombreRepresentante'
@@ -27,6 +30,7 @@ export interface SignersState {
 export interface ReportFormData {
   ayuntamientoId: string;
   expedienteId: string;
+  tipoTramite: TramiteType;
   llevaOficioRemision: boolean;
   numeroInforme: string;
   numeroSael: string;
@@ -40,6 +44,7 @@ export interface ReportFormData {
   medioSolicitud: string;
   municipio: string;
   cif: string;
+  codigoDir3: string;
   direccion: string;
   tratamiento: string;
   nombreRepresentante: string;
@@ -62,9 +67,23 @@ export interface ReportFormData {
   firmantes: SignersState;
 }
 
+export interface ReportDataBundle {
+  ayuntamiento: AyuntamientoRow;
+  contactoPrincipal: ContactoRow | null;
+  expedientes: ExpedienteRow[];
+}
+
+export interface ChecklistItem {
+  field: keyof ReportFormData;
+  label: string;
+  source: 'database' | 'manual';
+  value: string;
+}
+
 export const DB_MANAGED_FIELDS: DbManagedField[] = [
   'municipio',
   'cif',
+  'codigoDir3',
   'direccion',
   'tratamiento',
   'nombreRepresentante',
@@ -79,10 +98,51 @@ export const DB_MANAGED_FIELDS: DbManagedField[] = [
   'fechaResolucion'
 ];
 
+export const FIELD_LABELS: Record<keyof ReportFormData, string> = {
+  ayuntamientoId: 'Ayuntamiento',
+  expedienteId: 'Expediente',
+  tipoTramite: 'Tipo de trámite',
+  llevaOficioRemision: 'Lleva oficio de remisión',
+  numeroInforme: 'Número de informe',
+  numeroSael: 'Número SAEL',
+  numeroExterno: 'Número Externo',
+  numeroRcon: 'Número RCON',
+  fechaSolicitud: 'Fecha de solicitud',
+  fechaResolucion: 'Fecha de resolución',
+  servicio: 'Servicio',
+  area: 'Área',
+  asunto: 'Asunto',
+  medioSolicitud: 'Medio de solicitud',
+  municipio: 'Municipio',
+  cif: 'CIF',
+  codigoDir3: 'Código DIR3',
+  direccion: 'Dirección',
+  tratamiento: 'Tratamiento',
+  nombreRepresentante: 'Nombre del representante',
+  cargoRepresentante: 'Cargo del representante',
+  solicitanteNombre: 'Solicitante nombre',
+  solicitanteApellido1: 'Solicitante apellido 1',
+  solicitanteApellido2: 'Solicitante apellido 2',
+  personaRemision: 'Persona de remisión',
+  inicialesResponsable: 'Iniciales responsable',
+  inicialesRedactor: 'Iniciales redactor',
+  hecho1: 'Hecho 1',
+  hecho2: 'Hecho 2',
+  hecho3: 'Hecho 3',
+  normativa1: 'Normativa 1',
+  normativa2: 'Normativa 2',
+  normativa3: 'Normativa 3',
+  derechos1: 'Fundamentos de derecho',
+  conclusion1: 'Conclusión',
+  logoUrl: 'Logo URL',
+  firmantes: 'Firmantes'
+};
+
 export function createEmptyReportForm(): ReportFormData {
   return {
     ayuntamientoId: '',
     expedienteId: '',
+    tipoTramite: 'peticion_general',
     llevaOficioRemision: false,
     numeroInforme: '',
     numeroSael: '',
@@ -96,6 +156,7 @@ export function createEmptyReportForm(): ReportFormData {
     medioSolicitud: 'Sede electrónica',
     municipio: '',
     cif: '',
+    codigoDir3: '',
     direccion: '',
     tratamiento: '',
     nombreRepresentante: '',
@@ -199,15 +260,18 @@ export function mapDbDataToForm(
 
   return {
     ...createEmptyReportForm(),
+    tipoTramite: currentValues.tipoTramite,
     llevaOficioRemision: currentValues.llevaOficioRemision,
+    numeroInforme: normalizeText(expediente?.num_informe) || currentValues.numeroInforme,
+    numeroExterno:
+      normalizeText(expediente?.num_expediente_externo) || currentValues.numeroExterno,
     servicio: currentValues.servicio,
     area: currentValues.area,
-    asunto: currentValues.asunto,
-    medioSolicitud: currentValues.medioSolicitud,
+    asunto: normalizeText(expediente?.asunto) || currentValues.asunto,
+    medioSolicitud:
+      normalizeText(expediente?.medio_solicitud) || currentValues.medioSolicitud,
     inicialesResponsable: currentValues.inicialesResponsable,
     inicialesRedactor: currentValues.inicialesRedactor,
-    numeroInforme: currentValues.numeroInforme,
-    numeroExterno: currentValues.numeroExterno,
     hecho1: currentValues.hecho1,
     hecho2: currentValues.hecho2,
     hecho3: currentValues.hecho3,
@@ -222,6 +286,7 @@ export function mapDbDataToForm(
     expedienteId: expediente ? String(expediente.id) : '',
     municipio: ayuntamiento.nombre,
     cif: ayuntamiento.cif,
+    codigoDir3: normalizeText(ayuntamiento.codigo_dir3),
     direccion: normalizeText(ayuntamiento.direccion_sede),
     tratamiento: normalizeText(contacto?.tratamiento),
     nombreRepresentante: representativeName,
@@ -244,10 +309,16 @@ export function applyExpedienteToForm(
   return {
     ...currentValues,
     expedienteId: expediente ? String(expediente.id) : '',
+    numeroInforme: normalizeText(expediente?.num_informe) || currentValues.numeroInforme,
     numeroSael: normalizeText(expediente?.num_expediente_sael),
+    numeroExterno:
+      normalizeText(expediente?.num_expediente_externo) || currentValues.numeroExterno,
     numeroRcon: normalizeText(expediente?.num_expediente_rcon),
     fechaSolicitud: formatInputDate(expediente?.fecha_solicitud),
-    fechaResolucion: formatInputDate(expediente?.fecha_resolucion)
+    fechaResolucion: formatInputDate(expediente?.fecha_resolucion),
+    asunto: normalizeText(expediente?.asunto) || currentValues.asunto,
+    medioSolicitud:
+      normalizeText(expediente?.medio_solicitud) || currentValues.medioSolicitud
   };
 }
 
@@ -267,30 +338,67 @@ export function buildApplicantFullName(values: ReportFormData): string {
     .join(' ');
 }
 
-export function validateReportForm(values: ReportFormData): Array<keyof ReportFormData> {
-  const requiredFields: Array<keyof ReportFormData> = [
+export function requiresRemisionDocument(values: Pick<ReportFormData, 'tipoTramite' | 'llevaOficioRemision'>): boolean {
+  return values.tipoTramite === 'requerimiento_ctpda' || values.llevaOficioRemision;
+}
+
+export function getRequiredFieldsByTramite(values: Pick<ReportFormData, 'tipoTramite' | 'llevaOficioRemision'>): Array<keyof ReportFormData> {
+  const baseFields: Array<keyof ReportFormData> = [
     'ayuntamientoId',
+    'tipoTramite',
     'numeroInforme',
-    'numeroSael',
-    'numeroRcon',
+    'fechaSolicitud',
+    'medioSolicitud',
     'asunto',
     'inicialesResponsable',
     'inicialesRedactor'
   ];
 
-  if (values.llevaOficioRemision) {
-    requiredFields.push('personaRemision', 'medioSolicitud', 'fechaSolicitud');
+  if (values.tipoTramite === 'requerimiento_ctpda') {
+    baseFields.push('numeroRcon');
   }
 
-  return requiredFields.filter((field) => {
-    const value = values[field];
-    return typeof value === 'string' ? value.trim() === '' : !value;
-  });
+  if (requiresRemisionDocument(values)) {
+    baseFields.push('codigoDir3');
+  }
+
+  return Array.from(new Set(baseFields));
+}
+
+export function buildChecklist(
+  values: ReportFormData,
+  dbLoadedFields: Set<DbManagedField>
+): { recovered: ChecklistItem[]; missing: ChecklistItem[] } {
+  const requiredFields = getRequiredFieldsByTramite(values);
+  const recovered: ChecklistItem[] = [];
+  const missing: ChecklistItem[] = [];
+
+  for (const field of requiredFields) {
+    const rawValue = values[field];
+    const stringValue = typeof rawValue === 'string' ? rawValue.trim() : '';
+    const item: ChecklistItem = {
+      field,
+      label: FIELD_LABELS[field],
+      source: dbLoadedFields.has(field as DbManagedField) ? 'database' : 'manual',
+      value: stringValue
+    };
+
+    if (stringValue) {
+      recovered.push(item);
+    } else {
+      missing.push(item);
+    }
+  }
+
+  return { recovered, missing };
 }
 
 export function buildReportPreview(values: ReportFormData): string {
   const applicant = buildApplicantFullName(values);
   const signatureCode = buildSignatureCode(values);
+  const introduction = requiresRemisionDocument(values)
+    ? `Recibida petición mediante ${values.medioSolicitud} de fecha ${formatDisplayDate(values.fechaSolicitud)} de ${applicant} del ${values.servicio} del Área de ${values.area} del Ayuntamiento de ${values.municipio}, solicitando asistencia técnica en materia de Protección de Datos.`
+    : `Se emite informe en relación con el expediente ${values.numeroSael} del Ayuntamiento de ${values.municipio}.`;
 
   return `${signatureCode}
 
@@ -301,11 +409,7 @@ Nº Expediente RCON: ${values.numeroRcon}
 
 ASUNTO: Informe sobre ${values.asunto}.
 
-${
-    values.llevaOficioRemision
-      ? `Recibida petición mediante ${values.medioSolicitud} de fecha ${formatDisplayDate(values.fechaSolicitud)} de ${applicant} del ${values.servicio} del Área de ${values.area} del Ayuntamiento de ${values.municipio}, solicitando asistencia técnica en materia de Protección de Datos.`
-      : `Se emite informe en relación con el expediente ${values.numeroSael} del Ayuntamiento de ${values.municipio}.`
-  }
+${introduction}
 
 ANTECEDENTES DE HECHO:
 1. ${values.hecho1}

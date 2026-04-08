@@ -1,61 +1,46 @@
 import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
-import { useEffect, useState, type ReactNode } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useEffect, useMemo, useState } from 'react';
+import { Controller, useForm } from 'react-hook-form';
+import RemisionPDF from './RemisionPDF';
 import ReportPDF from './ReportPDF';
 import {
   applyExpedienteToForm,
+  buildChecklist,
   buildReportPreview,
-  buildSignatureCode,
   createEmptyReportForm,
   DB_MANAGED_FIELDS,
+  FIELD_LABELS,
   mapDbDataToForm,
-  validateReportForm,
+  requiresRemisionDocument,
   type DbManagedField,
   type ReportFormData
 } from '../lib/report-model';
 import {
-  supabase,
-  type AyuntamientoRow,
-  type ContactoRow,
-  type ExpedienteRow
-} from '../lib/supabase';
+  buildRemisionPdfPayload,
+  buildReportPdfPayload
+} from '../lib/report-payload';
+import { reportFormSchema } from '../lib/report-validation';
+import {
+  fetchAyuntamientoBundle,
+  fetchAyuntamientos
+} from '../services/report-data.service';
+import type { AyuntamientoRow, ExpedienteRow } from '../lib/supabase';
 
 type ManualEditMap = Partial<Record<DbManagedField, boolean>>;
+type PreviewMode = 'report' | 'remision' | null;
 
-const ENTITY_FIELDS: Array<{ key: DbManagedField; label: string; wide?: boolean }> = [
-  { key: 'municipio', label: 'Municipio' },
-  { key: 'cif', label: 'CIF' },
-  { key: 'direccion', label: 'Dirección', wide: true },
-  { key: 'tratamiento', label: 'Tratamiento' },
-  { key: 'nombreRepresentante', label: 'Nombre del Alcalde / Representante' },
-  { key: 'cargoRepresentante', label: 'Cargo', wide: true }
-];
-
-const EXPEDIENTE_FIELDS: Array<{
-  key: 'numeroSael' | 'numeroExterno' | 'numeroRcon' | 'numeroInforme' | 'fechaSolicitud' | 'fechaResolucion';
-  label: string;
-  type?: 'text' | 'date';
-  dbManaged?: boolean;
-}> = [
-  { key: 'numeroSael', label: 'Número SAEL', dbManaged: true },
-  { key: 'numeroExterno', label: 'Número Externo' },
-  { key: 'numeroRcon', label: 'Número RCON', dbManaged: true },
-  { key: 'numeroInforme', label: 'Número Informe' },
-  { key: 'fechaSolicitud', label: 'Fecha Solicitud', type: 'date', dbManaged: true },
-  { key: 'fechaResolucion', label: 'Fecha Resolución', type: 'date', dbManaged: true }
-];
-
-function isActiveStatus(status: string | null): boolean {
-  const normalized = status?.trim().toLowerCase() ?? '';
-  return ['activo', 'activa', 'abierto', 'en curso', 'en tramitacion', 'en tramitación'].includes(
-    normalized
-  );
+function createManualEditMap(): ManualEditMap {
+  return DB_MANAGED_FIELDS.reduce<ManualEditMap>((accumulator, field) => {
+    accumulator[field] = false;
+    return accumulator;
+  }, {});
 }
 
-function emptyManualEdits(): ManualEditMap {
-  return DB_MANAGED_FIELDS.reduce<ManualEditMap>((acc, field) => {
-    acc[field] = false;
-    return acc;
-  }, {});
+function createLoadedFieldSet(values: ReportFormData): Set<DbManagedField> {
+  return new Set(
+    DB_MANAGED_FIELDS.filter((field) => values[field].trim() !== '')
+  );
 }
 
 function ayuntamientoLabel(item: AyuntamientoRow): string {
@@ -65,8 +50,8 @@ function ayuntamientoLabel(item: AyuntamientoRow): string {
 function expedienteLabel(item: ExpedienteRow): string {
   const sael = item.num_expediente_sael || 'Sin SAEL';
   const rcon = item.num_expediente_rcon ? ` · RCON ${item.num_expediente_rcon}` : '';
-  const status = item.estado ? ` · ${item.estado}` : '';
-  return `${sael}${rcon}${status}`;
+  const estado = item.estado ? ` · ${item.estado}` : '';
+  return `${sael}${rcon}${estado}`;
 }
 
 function Accordion({
@@ -77,11 +62,14 @@ function Accordion({
 }: {
   title: string;
   description: string;
-  children: ReactNode;
+  children: React.ReactNode;
   defaultOpen?: boolean;
 }) {
   return (
-    <details open={defaultOpen} className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm">
+    <details
+      open={defaultOpen}
+      className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm"
+    >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-4 bg-slate-50 px-6 py-5">
         <div>
           <h2 className="text-lg font-semibold text-[#16324f]">{title}</h2>
@@ -100,14 +88,38 @@ export default function GeneratorForm() {
   const [isClient, setIsClient] = useState(false);
   const [ayuntamientos, setAyuntamientos] = useState<AyuntamientoRow[]>([]);
   const [expedientes, setExpedientes] = useState<ExpedienteRow[]>([]);
-  const [formData, setFormData] = useState<ReportFormData>(createEmptyReportForm);
-  const [manualEdits, setManualEdits] = useState<ManualEditMap>(emptyManualEdits);
+  const [manualEdits, setManualEdits] = useState<ManualEditMap>(createManualEditMap);
+  const [dbLoadedFields, setDbLoadedFields] = useState<Set<DbManagedField>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
+  const [alertMessage, setAlertMessage] = useState('');
   const [isLoadingAyuntamientos, setIsLoadingAyuntamientos] = useState(true);
   const [isLoadingRelations, setIsLoadingRelations] = useState(false);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [alertMessage, setAlertMessage] = useState('');
-  const [missingFields, setMissingFields] = useState<Array<keyof ReportFormData>>([]);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(null);
+
+  const {
+    control,
+    register,
+    reset,
+    getValues,
+    setValue,
+    watch,
+    trigger,
+    formState: { errors, isValid }
+  } = useForm<ReportFormData>({
+    defaultValues: createEmptyReportForm(),
+    resolver: zodResolver(reportFormSchema),
+    mode: 'onChange'
+  });
+
+  const values = watch();
+  const reportPayload = useMemo(() => buildReportPdfPayload(values), [values]);
+  const remisionPayload = useMemo(() => buildRemisionPdfPayload(values), [values]);
+  const checklist = useMemo(
+    () => buildChecklist(values, dbLoadedFields),
+    [values, dbLoadedFields]
+  );
+  const canGenerate = isValid && checklist.missing.length === 0;
+  const showRemisionAction = requiresRemisionDocument(values);
 
   useEffect(() => {
     setIsClient(true);
@@ -118,11 +130,21 @@ export default function GeneratorForm() {
 
     async function loadAyuntamientos() {
       setIsLoadingAyuntamientos(true);
-      const { data, error } = await supabase.from('Ayuntamiento').select('*').order('nombre', { ascending: true });
-      if (cancelled) return;
-      setAyuntamientos(error ? [] : ((data as AyuntamientoRow[]) ?? []));
-      setAlertMessage(error ? 'No se pudo cargar la tabla Ayuntamiento.' : '');
-      setIsLoadingAyuntamientos(false);
+      try {
+        const data = await fetchAyuntamientos();
+        if (!cancelled) {
+          setAyuntamientos(data);
+          setAlertMessage('');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAlertMessage(error instanceof Error ? error.message : 'No se pudo cargar Ayuntamiento.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingAyuntamientos(false);
+        }
+      }
     }
 
     void loadAyuntamientos();
@@ -133,131 +155,143 @@ export default function GeneratorForm() {
 
   useEffect(() => {
     let cancelled = false;
+    const ayuntamientoId = values.ayuntamientoId;
 
-    async function loadRelations() {
-      if (!formData.ayuntamientoId) {
+    async function loadBundle() {
+      if (!ayuntamientoId) {
         setExpedientes([]);
-        setManualEdits(emptyManualEdits());
+        setManualEdits(createManualEditMap());
+        setDbLoadedFields(new Set());
         return;
       }
-
-      const ayuntamiento = ayuntamientos.find((item) => String(item.id) === formData.ayuntamientoId);
-      if (!ayuntamiento) return;
 
       setIsLoadingRelations(true);
-      const [contactosResponse, expedientesResponse] = await Promise.all([
-        supabase.from('Contacto').select('*').eq('ayuntamiento_id', ayuntamiento.id).order('es_principal', { ascending: false }).order('created_at', { ascending: true }),
-        supabase.from('Expediente').select('*').eq('ayuntamiento_id', ayuntamiento.id).order('created_at', { ascending: false })
-      ]);
 
-      if (cancelled) return;
-      if (contactosResponse.error || expedientesResponse.error) {
-        setAlertMessage('No se pudieron cargar Contacto y Expediente del ayuntamiento seleccionado.');
-        setIsLoadingRelations(false);
-        return;
+      try {
+        const bundle = await fetchAyuntamientoBundle(ayuntamientoId);
+        if (cancelled) {
+          return;
+        }
+
+        const nextValues = mapDbDataToForm(
+          bundle.ayuntamiento,
+          bundle.contactoPrincipal,
+          bundle.expedientes[0] ?? null,
+          getValues()
+        );
+
+        reset(nextValues);
+        setExpedientes(bundle.expedientes);
+        setManualEdits(createManualEditMap());
+        setDbLoadedFields(createLoadedFieldSet(nextValues));
+        setAlertMessage('');
+        await trigger();
+      } catch (error) {
+        if (!cancelled) {
+          setAlertMessage(
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar los datos relacionados.'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingRelations(false);
+        }
       }
-
-      const contactos = (contactosResponse.data as ContactoRow[]) ?? [];
-      const contactoPrincipal = contactos.find((item) => item.es_principal) ?? contactos.at(0) ?? null;
-      const asociados = ((expedientesResponse.data as ExpedienteRow[]) ?? []).sort((a, b) => {
-        const left = isActiveStatus(a.estado) ? 0 : 1;
-        const right = isActiveStatus(b.estado) ? 0 : 1;
-        return left - right;
-      });
-      const expedienteInicial = asociados.at(0) ?? null;
-
-      setExpedientes(asociados);
-      setManualEdits(emptyManualEdits());
-      setFormData((current) => mapDbDataToForm(ayuntamiento, contactoPrincipal, expedienteInicial, current));
-      setIsLoadingRelations(false);
-      setAlertMessage('');
     }
 
-    void loadRelations();
+    void loadBundle();
     return () => {
       cancelled = true;
     };
-  }, [ayuntamientos, formData.ayuntamientoId]);
+  }, [getValues, reset, trigger, values.ayuntamientoId]);
 
   useEffect(() => {
-    if (!formData.expedienteId) return;
-    const expediente = expedientes.find((item) => String(item.id) === formData.expedienteId) ?? null;
-    if (!expediente) return;
-    setFormData((current) => applyExpedienteToForm(current, expediente));
-  }, [expedientes, formData.expedienteId]);
+    const expedienteId = values.expedienteId;
+    if (!expedienteId) {
+      return;
+    }
+
+    const expediente = expedientes.find((item) => String(item.id) === expedienteId) ?? null;
+    if (!expediente) {
+      return;
+    }
+
+    const nextValues = applyExpedienteToForm(getValues(), expediente);
+    reset(nextValues);
+    setDbLoadedFields(createLoadedFieldSet(nextValues));
+    void trigger();
+  }, [expedientes, getValues, reset, trigger, values.expedienteId]);
 
   const filteredAyuntamientos = ayuntamientos.filter((item) => {
     const normalized = searchTerm.trim().toLowerCase();
-    if (!normalized) return true;
-    return [item.nombre, item.cif, item.comarca, item.poblacion].filter(Boolean).join(' ').toLowerCase().includes(normalized);
+    if (!normalized) {
+      return true;
+    }
+
+    return [item.nombre, item.cif, item.comarca, item.poblacion]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(normalized);
   });
-
-  const previewText = buildReportPreview(formData);
-  const signatureCode = buildSignatureCode(formData);
-  const pdfDocument = <ReportPDF data={formData} />;
-
-  function updateField<K extends keyof ReportFormData>(field: K, value: ReportFormData[K]) {
-    setFormData((current) => ({ ...current, [field]: value }));
-    setMissingFields((current) => current.filter((item) => item !== field));
-  }
 
   function toggleManual(field: DbManagedField) {
     setManualEdits((current) => ({ ...current, [field]: !current[field] }));
   }
 
-  function fieldError(field: keyof ReportFormData) {
-    return missingFields.includes(field) ? 'Este campo es obligatorio.' : '';
+  function isReadonly(field: DbManagedField) {
+    return dbLoadedFields.has(field) && !manualEdits[field];
   }
 
-  function validateAndOpen() {
-    const missing = validateReportForm(formData);
-    setMissingFields(missing);
-    if (missing.length > 0) {
-      setAlertMessage('Faltan campos obligatorios antes de generar el informe.');
+  function openPreview(mode: PreviewMode) {
+    if (!mode || !canGenerate) {
       return;
     }
-    setAlertMessage('');
-    setIsPreviewOpen(true);
+
+    setPreviewMode(mode);
   }
 
-  function renderInput(
-    key: keyof ReportFormData,
+  function renderDbField(
+    field: DbManagedField,
     label: string,
-    options?: { type?: 'text' | 'date'; dbManaged?: boolean; wide?: boolean }
+    options?: { type?: 'text' | 'date'; wide?: boolean }
   ) {
-    const dbField = options?.dbManaged ? (key as DbManagedField) : null;
-    const readOnly = dbField ? !manualEdits[dbField] : false;
-
     return (
-      <label key={String(key)} className={options?.wide ? 'space-y-2 md:col-span-2' : 'space-y-2'}>
+      <label
+        key={field}
+        className={options?.wide ? 'space-y-2 md:col-span-2' : 'space-y-2'}
+      >
         <span className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium text-slate-700">{label}</span>
-          {dbField ? (
+          {dbLoadedFields.has(field) ? (
             <button
               type="button"
-              onClick={() => toggleManual(dbField)}
+              onClick={() => toggleManual(field)}
               className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                manualEdits[dbField]
+                manualEdits[field]
                   ? 'bg-[#16324f] text-white'
                   : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
               }`}
             >
-              {manualEdits[dbField] ? 'Bloquear' : 'Editar'}
+              {manualEdits[field] ? 'Bloquear' : 'Editar'}
             </button>
           ) : null}
         </span>
         <input
           type={options?.type ?? 'text'}
-          value={String(formData[key] ?? '')}
-          readOnly={readOnly}
-          onChange={(event) => updateField(key, event.target.value as ReportFormData[typeof key])}
+          {...register(field)}
+          readOnly={isReadonly(field)}
           className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${
-            readOnly
+            isReadonly(field)
               ? 'border-slate-200 bg-slate-100 text-slate-500'
               : 'border-slate-300 bg-white text-slate-900 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200'
-          } ${fieldError(key) ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : ''}`}
+          } ${errors[field] ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : ''}`}
         />
-        {fieldError(key) ? <p className="text-xs font-medium text-red-600">{fieldError(key)}</p> : null}
+        {errors[field] ? (
+          <p className="text-xs font-medium text-red-600">{errors[field]?.message}</p>
+        ) : null}
       </label>
     );
   }
@@ -267,139 +301,422 @@ export default function GeneratorForm() {
       <div className="border-b border-[#d7dee8] bg-[#16324f] text-white shadow-lg">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-300">Servicio de Asistencia a Entidades Locales</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-[0.18em]">SHALUQA REPORTS</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-300">
+              Servicio de Asistencia a Entidades Locales
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-[0.18em]">
+              SAEL REPORTS
+            </h1>
           </div>
-          <button type="button" onClick={validateAndOpen} className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-[#16324f] shadow-md transition hover:bg-slate-100">
-            Generar Informe PDF
-          </button>
         </div>
       </div>
 
       <div className="mx-auto max-w-7xl px-6 py-8 lg:px-8 lg:py-10">
         <div className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
           <div className="space-y-6">
-            <label className="flex cursor-pointer items-start gap-4 rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm">
-              <input type="checkbox" checked={formData.llevaOficioRemision} onChange={(event) => updateField('llevaOficioRemision', event.target.checked)} className="mt-1 h-5 w-5 rounded border-slate-300 text-[#16324f] focus:ring-[#16324f]" />
-              <span>
-                <span className="block text-base font-semibold text-[#16324f]">¿Lleva oficio de remisión?</span>
-                <span className="mt-1 block text-sm text-slate-500">Actívalo para mostrar los campos extra del oficio y validarlos antes de generar el informe.</span>
-              </span>
-            </label>
+            <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr]">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Buscar Ayuntamiento</span>
+                  <input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Nombre, CIF, comarca..."
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                  />
+                </label>
 
-            <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/70">
-              <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr_1fr]">
-                {renderInput('logoUrl', 'Logo URL')}
                 <label className="space-y-2">
                   <span className="text-sm font-medium text-slate-700">Ayuntamiento</span>
-                  <select value={formData.ayuntamientoId} onChange={(event) => updateField('ayuntamientoId', event.target.value)} className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200">
-                    <option value="">Selecciona un ayuntamiento</option>
-                    {filteredAyuntamientos.map((item) => <option key={item.id} value={String(item.id)}>{ayuntamientoLabel(item)}</option>)}
-                  </select>
-                  {fieldError('ayuntamientoId') ? <p className="text-xs font-medium text-red-600">{fieldError('ayuntamientoId')}</p> : null}
+                  <Controller
+                    control={control}
+                    name="ayuntamientoId"
+                    render={({ field }) => (
+                      <select
+                        {...field}
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                      >
+                        <option value="">Selecciona un ayuntamiento</option>
+                        {filteredAyuntamientos.map((item) => (
+                          <option key={item.id} value={String(item.id)}>
+                            {ayuntamientoLabel(item)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  />
+                  {errors.ayuntamientoId ? (
+                    <p className="text-xs font-medium text-red-600">
+                      {errors.ayuntamientoId.message}
+                    </p>
+                  ) : null}
                 </label>
+
                 <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Buscar</span>
-                  <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre, CIF, comarca..." className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200" />
+                  <span className="text-sm font-medium text-slate-700">Tipo de trámite</span>
+                  <select
+                    {...register('tipoTramite')}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                  >
+                    <option value="peticion_general">Petición General</option>
+                    <option value="requerimiento_ctpda">Requerimiento CTPDA</option>
+                  </select>
                 </label>
               </div>
 
-              <label className="mt-4 block space-y-2">
-                <span className="text-sm font-medium text-slate-700">Expediente asociado</span>
-                <select
-                  value={formData.expedienteId}
-                  onChange={(event) => updateField('expedienteId', event.target.value)}
-                  disabled={expedientes.length === 0}
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
-                >
-                  <option value="">Selecciona un expediente</option>
-                  {expedientes.map((item) => (
-                    <option key={item.id} value={String(item.id)}>
-                      {expedienteLabel(item)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
-                <span className="rounded-full bg-slate-100 px-3 py-1">{isLoadingAyuntamientos ? 'Cargando ayuntamientos...' : `${filteredAyuntamientos.length} ayuntamientos visibles`}</span>
-                <span className="rounded-full bg-slate-100 px-3 py-1">{isLoadingRelations ? 'Cargando relaciones...' : `${expedientes.length} expedientes asociados`}</span>
-                <span className="rounded-full bg-[#16324f] px-3 py-1 text-white">Firma: {signatureCode || 'Pendiente'}</span>
+              <div className="mt-4 grid gap-4 md:grid-cols-[1fr_auto]">
+                <label className="flex cursor-pointer items-start gap-4 rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4">
+                  <input
+                    type="checkbox"
+                    {...register('llevaOficioRemision')}
+                    className="mt-1 h-5 w-5 rounded border-slate-300 text-[#16324f] focus:ring-[#16324f]"
+                  />
+                  <span>
+                    <span className="block text-base font-semibold text-[#16324f]">
+                      ¿Lleva oficio de remisión?
+                    </span>
+                    <span className="mt-1 block text-sm text-slate-500">
+                      Condiciona los campos extra y la generación del PDF de oficio.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">Expediente asociado</span>
+                  <Controller
+                    control={control}
+                    name="expedienteId"
+                    render={({ field }) => (
+                      <select
+                        {...field}
+                        disabled={expedientes.length === 0}
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition disabled:cursor-not-allowed disabled:bg-slate-100 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                      >
+                        <option value="">Selecciona un expediente</option>
+                        {expedientes.map((item) => (
+                          <option key={item.id} value={String(item.id)}>
+                            {expedienteLabel(item)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  />
+                </label>
               </div>
-              {alertMessage ? <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{alertMessage}</div> : null}
-            </section>
 
-            <Accordion title="Entidad y Representante" description="Datos relacionales con bloqueo por campo y edición puntual." defaultOpen>
-              {ENTITY_FIELDS.map((field) => renderInput(field.key, field.label, { dbManaged: true, wide: field.wide }))}
+              <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
+                <span className="rounded-full bg-slate-100 px-3 py-1">
+                  {isLoadingAyuntamientos
+                    ? 'Cargando ayuntamientos...'
+                    : `${filteredAyuntamientos.length} ayuntamientos visibles`}
+                </span>
+                <span className="rounded-full bg-slate-100 px-3 py-1">
+                  {isLoadingRelations
+                    ? 'Cargando relaciones...'
+                    : `${expedientes.length} expedientes asociados`}
+                </span>
+              </div>
+
+              {alertMessage ? (
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {alertMessage}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="rounded-[1.75rem] border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-800">
+                  Datos recuperados de la BD
+                </h2>
+                <ul className="mt-3 space-y-2 text-sm text-emerald-900">
+                  {checklist.recovered.length > 0 ? (
+                    checklist.recovered.map((item) => (
+                      <li key={item.field} className="rounded-xl bg-white/80 px-3 py-2">
+                        {item.label}
+                      </li>
+                    ))
+                  ) : (
+                    <li className="rounded-xl bg-white/80 px-3 py-2">
+                      Aún no hay datos recuperados.
+                    </li>
+                  )}
+                </ul>
+              </section>
+
+              <section className="rounded-[1.75rem] border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-800">
+                  Datos faltantes para respuesta válida
+                </h2>
+                <ul className="mt-3 space-y-2 text-sm text-amber-900">
+                  {checklist.missing.length > 0 ? (
+                    checklist.missing.map((item) => (
+                      <li key={item.field} className="rounded-xl bg-white/80 px-3 py-2">
+                        {item.label}
+                      </li>
+                    ))
+                  ) : (
+                    <li className="rounded-xl bg-white/80 px-3 py-2">
+                      Todo lo obligatorio está completo.
+                    </li>
+                  )}
+                </ul>
+              </section>
+            </div>
+
+            <Accordion
+              title="Entidad y Representante"
+              description="Datos relacionales de Ayuntamiento y Contacto principal."
+              defaultOpen
+            >
+              {renderDbField('municipio', FIELD_LABELS.municipio)}
+              {renderDbField('cif', FIELD_LABELS.cif)}
+              {renderDbField('codigoDir3', FIELD_LABELS.codigoDir3)}
+              {renderDbField('direccion', FIELD_LABELS.direccion, { wide: true })}
+              {renderDbField('tratamiento', FIELD_LABELS.tratamiento)}
+              {renderDbField('nombreRepresentante', FIELD_LABELS.nombreRepresentante)}
+              {renderDbField('cargoRepresentante', FIELD_LABELS.cargoRepresentante, {
+                wide: true
+              })}
             </Accordion>
 
-            <Accordion title="Expedientes y Firmas" description="Numeración del expediente y composición de firmas del informe.">
-              {EXPEDIENTE_FIELDS.map((field) => renderInput(field.key, field.label, { type: field.type, dbManaged: field.dbManaged }))}
-              {renderInput('inicialesResponsable', 'Iniciales Responsable')}
-              {renderInput('inicialesRedactor', 'Iniciales Redactor')}
+            <Accordion
+              title="Expedientes y Firmas"
+              description="Variables clave de numeración y firma."
+            >
+              {renderDbField('numeroSael', FIELD_LABELS.numeroSael)}
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.numeroExterno}</span>
+                <input
+                  {...register('numeroExterno')}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                />
+              </label>
+              {renderDbField('numeroRcon', FIELD_LABELS.numeroRcon)}
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.numeroInforme}</span>
+                <input
+                  {...register('numeroInforme')}
+                  className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${
+                    errors.numeroInforme
+                      ? 'border-red-300 focus:border-red-500 focus:ring-red-100'
+                      : 'border-slate-300 bg-white text-slate-900 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200'
+                  }`}
+                />
+                {errors.numeroInforme ? (
+                  <p className="text-xs font-medium text-red-600">
+                    {errors.numeroInforme.message}
+                  </p>
+                ) : null}
+              </label>
+              {renderDbField('fechaSolicitud', FIELD_LABELS.fechaSolicitud, { type: 'date' })}
+              {renderDbField('fechaResolucion', FIELD_LABELS.fechaResolucion, {
+                type: 'date'
+              })}
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.inicialesResponsable}</span>
+                <input
+                  {...register('inicialesResponsable')}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                />
+                {errors.inicialesResponsable ? (
+                  <p className="text-xs font-medium text-red-600">
+                    {errors.inicialesResponsable.message}
+                  </p>
+                ) : null}
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.inicialesRedactor}</span>
+                <input
+                  {...register('inicialesRedactor')}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                />
+                {errors.inicialesRedactor ? (
+                  <p className="text-xs font-medium text-red-600">
+                    {errors.inicialesRedactor.message}
+                  </p>
+                ) : null}
+              </label>
             </Accordion>
 
-            {formData.llevaOficioRemision ? (
-              <Accordion title="Oficio de Remisión" description="Campos condicionados por la regla de negocio del oficio." defaultOpen>
-                {renderInput('personaRemision', 'Persona de remisión', { dbManaged: true })}
-                {renderInput('medioSolicitud', 'Medio de solicitud')}
-                {renderInput('solicitanteNombre', 'Solicitante nombre', { dbManaged: true })}
-                {renderInput('solicitanteApellido1', 'Solicitante apellido 1', { dbManaged: true })}
-                {renderInput('solicitanteApellido2', 'Solicitante apellido 2', { dbManaged: true })}
+            {requiresRemisionDocument(values) ? (
+              <Accordion
+                title="Oficio de Remisión"
+                description="Campos requeridos cuando el trámite exige remisión."
+                defaultOpen
+              >
+                {renderDbField('personaRemision', FIELD_LABELS.personaRemision)}
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.medioSolicitud}</span>
+                  <input
+                    {...register('medioSolicitud')}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                  />
+                </label>
+                {renderDbField('solicitanteNombre', FIELD_LABELS.solicitanteNombre)}
+                {renderDbField('solicitanteApellido1', FIELD_LABELS.solicitanteApellido1)}
+                {renderDbField('solicitanteApellido2', FIELD_LABELS.solicitanteApellido2)}
               </Accordion>
             ) : null}
 
-            <Accordion title="Contenido y Firmantes" description="Narrativa del informe y pie adaptativo según los firmantes seleccionados.">
-              {renderInput('servicio', 'Servicio')}
-              {renderInput('area', 'Área')}
-              {renderInput('asunto', 'Asunto', { wide: true })}
+            <Accordion
+              title="Contenido y Firmantes"
+              description="Narrativa del informe y selección de firmantes."
+            >
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.servicio}</span>
+                <input
+                  {...register('servicio')}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.area}</span>
+                <input
+                  {...register('area')}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                />
+              </label>
+              <label className="space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.asunto}</span>
+                <input
+                  {...register('asunto')}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                />
+              </label>
               <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-sm font-medium text-slate-700">Firmantes incluidos</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-3">
                   {(['delegado', 'diputado', 'coordinador'] as const).map((key) => (
                     <label key={key} className="flex items-center gap-3 text-sm text-slate-700">
-                      <input type="checkbox" checked={formData.firmantes[key]} onChange={(event) => updateField('firmantes', { ...formData.firmantes, [key]: event.target.checked })} />
-                      {key === 'delegado' ? 'Delegado' : key === 'diputado' ? 'Diputado' : 'Coordinador'}
+                      <Controller
+                        control={control}
+                        name={`firmantes.${key}`}
+                        render={({ field }) => (
+                          <input
+                            type="checkbox"
+                            checked={field.value}
+                            onChange={(event) => field.onChange(event.target.checked)}
+                          />
+                        )}
+                      />
+                      {key === 'delegado'
+                        ? 'Delegado'
+                        : key === 'diputado'
+                          ? 'Diputado'
+                          : 'Coordinador'}
                     </label>
                   ))}
                 </div>
               </div>
-              {(['hecho1', 'hecho2', 'hecho3', 'normativa1', 'normativa2', 'normativa3', 'derechos1', 'conclusion1'] as const).map((key) => (
-                <label key={key} className={key === 'derechos1' || key === 'conclusion1' || key === 'hecho3' || key === 'normativa3' ? 'space-y-2 md:col-span-2' : 'space-y-2'}>
-                  <span className="text-sm font-medium text-slate-700">{key}</span>
-                  <textarea value={formData[key]} onChange={(event) => updateField(key, event.target.value)} className="min-h-28 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200" />
+              {(['hecho1', 'hecho2', 'hecho3', 'normativa1', 'normativa2', 'normativa3', 'derechos1', 'conclusion1'] as const).map((field) => (
+                <label
+                  key={field}
+                  className={
+                    field === 'hecho3' ||
+                    field === 'normativa3' ||
+                    field === 'derechos1' ||
+                    field === 'conclusion1'
+                      ? 'space-y-2 md:col-span-2'
+                      : 'space-y-2'
+                  }
+                >
+                  <span className="text-sm font-medium text-slate-700">
+                    {FIELD_LABELS[field]}
+                  </span>
+                  <textarea
+                    {...register(field)}
+                    className="min-h-28 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                  />
                 </label>
               ))}
             </Accordion>
           </div>
 
           <section className="rounded-[2rem] border border-slate-200 bg-[#16324f] p-6 text-white shadow-2xl shadow-slate-300/30">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">Previsualización</p>
-                <h2 className="mt-2 text-2xl font-semibold">Borrador del informe</h2>
-              </div>
-              {isClient ? <PDFDownloadLink document={pdfDocument} fileName={`informe-${formData.municipio || 'shaluqa'}.pdf`} className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#16324f] transition hover:bg-slate-100">{({ loading }) => loading ? 'Preparando PDF...' : 'Descargar PDF'}</PDFDownloadLink> : null}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">
+                Paso 6 y 7
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">Panel de acciones</h2>
             </div>
-            <textarea readOnly value={previewText} className="mt-6 min-h-[980px] w-full rounded-3xl border border-white/10 bg-[#0f2438] p-5 font-mono text-sm leading-7 text-slate-100 shadow-inner outline-none" />
+
+            <div className="mt-6 grid gap-3">
+              <button
+                type="button"
+                disabled={!canGenerate}
+                onClick={() => openPreview('report')}
+                className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#16324f] transition enabled:hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                Generar Informe DPD (PDF)
+              </button>
+
+              {showRemisionAction ? (
+                <button
+                  type="button"
+                  disabled={!canGenerate}
+                  onClick={() => openPreview('remision')}
+                  className="rounded-2xl bg-slate-200 px-4 py-3 text-sm font-semibold text-[#16324f] transition enabled:hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+                >
+                  Generar Oficio de Remisión (PDF)
+                </button>
+              ) : null}
+            </div>
+
+            <textarea
+              readOnly
+              value={buildReportPreview(values)}
+              className="mt-6 min-h-[980px] w-full rounded-3xl border border-white/10 bg-[#0f2438] p-5 font-mono text-sm leading-7 text-slate-100 shadow-inner outline-none"
+            />
           </section>
         </div>
       </div>
 
-      {isPreviewOpen && isClient ? (
+      {previewMode && isClient ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
           <div className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Vista previa PDF</p>
-                <h2 className="mt-1 text-xl font-semibold text-[#16324f]">Informe de {formData.municipio || 'Ayuntamiento'}</h2>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
+                  Vista previa PDF
+                </p>
+                <h2 className="mt-1 text-xl font-semibold text-[#16324f]">
+                  {previewMode === 'report' ? 'Informe DPD' : 'Oficio de Remisión'}
+                </h2>
               </div>
+
               <div className="flex items-center gap-3">
-                <PDFDownloadLink document={pdfDocument} fileName={`informe-${formData.municipio || 'shaluqa'}.pdf`} className="rounded-2xl bg-[#16324f] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#23486f]">{({ loading }) => loading ? 'Preparando PDF...' : 'Descargar PDF'}</PDFDownloadLink>
-                <button type="button" onClick={() => setIsPreviewOpen(false)} className="rounded-2xl bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-300">Cerrar</button>
+                <PDFDownloadLink
+                  document={
+                    previewMode === 'report' ? (
+                      <ReportPDF payload={reportPayload} />
+                    ) : (
+                      <RemisionPDF payload={remisionPayload} />
+                    )
+                  }
+                  fileName={`${previewMode}-${values.municipio || 'shaluqa'}.pdf`}
+                  className="rounded-2xl bg-[#16324f] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#23486f]"
+                >
+                  {({ loading }) => (loading ? 'Preparando PDF...' : 'Descargar PDF')}
+                </PDFDownloadLink>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode(null)}
+                  className="rounded-2xl bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-300"
+                >
+                  Cerrar
+                </button>
               </div>
             </div>
+
             <div className="flex-1 bg-slate-100">
-              <PDFViewer width="100%" height="100%" showToolbar>{pdfDocument}</PDFViewer>
+              <PDFViewer width="100%" height="100%" showToolbar>
+                {previewMode === 'report' ? (
+                  <ReportPDF payload={reportPayload} />
+                ) : (
+                  <RemisionPDF payload={remisionPayload} />
+                )}
+              </PDFViewer>
             </div>
           </div>
         </div>

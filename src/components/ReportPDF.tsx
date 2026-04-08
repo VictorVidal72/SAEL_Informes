@@ -1,20 +1,8 @@
 import { Document, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
-import type { ReportFormData } from '../lib/report-model';
-import {
-  buildApplicantFullName,
-  buildSignatureCode,
-  formatDisplayDate
-} from '../lib/report-model';
+import type { ReportPdfPayload } from '../lib/report-payload';
 
 const HEADER_IMAGE = '/Diputacion.png';
 const FOOTER_IMAGE = '/pie-pagina.png';
-
-const COLORS = {
-  navy: '#16324f',
-  steel: '#52606d',
-  light: '#d9e2ec',
-  soft: '#f4f7fb'
-};
 
 const styles = StyleSheet.create({
   page: {
@@ -46,7 +34,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     borderBottomWidth: 2,
-    borderBottomColor: COLORS.navy,
+    borderBottomColor: '#16324f',
     paddingBottom: 12,
     marginBottom: 18
   },
@@ -58,40 +46,40 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end'
   },
   institutionTitle: {
-    color: COLORS.navy,
+    color: '#16324f',
     fontSize: 12,
     fontWeight: 700
   },
   institutionLine: {
-    color: COLORS.steel,
+    color: '#52606d',
     fontSize: 9.5,
     textAlign: 'right'
   },
-  signatureCode: {
-    color: COLORS.steel,
+  code: {
+    color: '#52606d',
     fontSize: 9,
     marginBottom: 12
   },
-  metadata: {
+  meta: {
     marginBottom: 18
   },
-  metadataLine: {
+  line: {
     marginBottom: 4
   },
   label: {
-    color: COLORS.navy,
+    color: '#16324f',
     fontWeight: 700
   },
-  asuntoBox: {
-    backgroundColor: COLORS.soft,
+  assunto: {
+    backgroundColor: '#f4f7fb',
     borderLeftWidth: 4,
-    borderLeftColor: COLORS.navy,
+    borderLeftColor: '#16324f',
     paddingVertical: 8,
     paddingHorizontal: 12,
     marginBottom: 18
   },
-  asuntoText: {
-    color: COLORS.navy,
+  assuntoText: {
+    color: '#16324f',
     fontSize: 11,
     fontWeight: 700
   },
@@ -100,7 +88,7 @@ const styles = StyleSheet.create({
     textAlign: 'justify'
   },
   title: {
-    color: COLORS.navy,
+    color: '#16324f',
     fontSize: 12,
     fontWeight: 700,
     textAlign: 'center',
@@ -108,7 +96,7 @@ const styles = StyleSheet.create({
     marginBottom: 18
   },
   sectionTitle: {
-    color: COLORS.navy,
+    color: '#16324f',
     fontSize: 11,
     fontWeight: 700,
     marginTop: 10,
@@ -122,63 +110,47 @@ const styles = StyleSheet.create({
     marginTop: 26,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: COLORS.light
+    borderTopColor: '#d9e2ec'
   },
   signatureBlock: {
     marginBottom: 16
   },
   signatureRole: {
-    color: COLORS.steel,
+    color: '#52606d',
     marginBottom: 3
   },
   signatureName: {
-    color: COLORS.navy,
+    color: '#16324f',
     fontWeight: 700
   }
 });
 
 interface ReportPDFProps {
-  data: ReportFormData;
+  payload: ReportPdfPayload;
 }
 
-export default function ReportPDF({ data }: ReportPDFProps) {
-  const applicant = buildApplicantFullName(data);
-  const signatureCode = buildSignatureCode(data);
-  const headerImage = data.logoUrl || HEADER_IMAGE;
+export default function ReportPDF({ payload }: ReportPDFProps) {
+  const { data } = payload;
   const signatures = [
     data.firmantes.delegado
-      ? {
-          role: `El Delegado de Protección de Datos de ${data.municipio}`,
-          name: 'Antonio Jesús Sánchez Guirado'
-        }
+      ? { role: `El Delegado de Protección de Datos de ${data.municipio}`, name: 'Antonio Jesús Sánchez Guirado' }
       : null,
     data.firmantes.diputado
-      ? {
-          role: 'El Diputado de Asistencia a Municipios',
-          name: 'Antonio Jesús Aragón Dorca'
-        }
+      ? { role: 'El Diputado de Asistencia a Municipios', name: 'Antonio Jesús Aragón Dorca' }
       : null,
     data.firmantes.coordinador
-      ? {
-          role: 'El coordinador del SAEL',
-          name: 'Óscar Palma Delgado'
-        }
+      ? { role: 'El coordinador del SAEL', name: 'Óscar Palma Delgado' }
       : null
   ].filter(Boolean) as Array<{ role: string; name: string }>;
 
-  const introduction = data.llevaOficioRemision
-    ? `Recibida petición mediante ${data.medioSolicitud} de fecha ${formatDisplayDate(data.fechaSolicitud)} de ${applicant} del ${data.servicio} del Área de ${data.area} del Ayuntamiento de ${data.municipio}, solicitando asistencia técnica en materia de Protección de Datos.`
-    : `Se emite informe en relación con el expediente ${data.numeroSael} del Ayuntamiento de ${data.municipio}.`;
-
   return (
-    <Document title={`Informe ${data.numeroSael || data.municipio}`}>
+    <Document title={payload.title}>
       <Page size="A4" style={styles.page}>
-        <Image fixed src={headerImage} style={styles.headerImage} />
+        <Image fixed src={data.logoUrl || HEADER_IMAGE} style={styles.headerImage} />
         <Image fixed src={FOOTER_IMAGE} style={styles.footerImage} />
 
         <View style={styles.topBar}>
           <View style={styles.spacer} />
-
           <View style={styles.institution}>
             <Text style={styles.institutionTitle}>Diputación de Cádiz</Text>
             <Text style={styles.institutionLine}>Servicio de Asistencia a Entidades Locales</Text>
@@ -186,63 +158,39 @@ export default function ReportPDF({ data }: ReportPDFProps) {
           </View>
         </View>
 
-        <Text style={styles.signatureCode}>{signatureCode}</Text>
+        <Text style={styles.code}>{payload.signatureCode}</Text>
 
-        <View style={styles.metadata}>
-          <Text style={styles.metadataLine}>
-            <Text style={styles.label}>Nº Informe: </Text>
-            {data.numeroInforme}
-          </Text>
-          <Text style={styles.metadataLine}>
-            <Text style={styles.label}>Nº Expediente SAEL: </Text>
-            {data.numeroSael}
-          </Text>
-          <Text style={styles.metadataLine}>
-            <Text style={styles.label}>Nº Expediente Externo: </Text>
-            {data.numeroExterno}
-          </Text>
-          <Text style={styles.metadataLine}>
-            <Text style={styles.label}>Nº Expediente RCON: </Text>
-            {data.numeroRcon}
-          </Text>
+        <View style={styles.meta}>
+          <Text style={styles.line}><Text style={styles.label}>Nº Informe: </Text>{data.numeroInforme}</Text>
+          <Text style={styles.line}><Text style={styles.label}>Nº Expediente SAEL: </Text>{data.numeroSael}</Text>
+          <Text style={styles.line}><Text style={styles.label}>Nº Expediente Externo: </Text>{data.numeroExterno}</Text>
+          <Text style={styles.line}><Text style={styles.label}>Nº Expediente RCON: </Text>{data.numeroRcon}</Text>
         </View>
 
-        <View style={styles.asuntoBox}>
-          <Text style={styles.asuntoText}>ASUNTO: Informe sobre {data.asunto}.</Text>
+        <View style={styles.assunto}>
+          <Text style={styles.assuntoText}>ASUNTO: Informe sobre {data.asunto}.</Text>
         </View>
 
-        <Text style={styles.paragraph}>{introduction}</Text>
-
+        <Text style={styles.paragraph}>{payload.introduction}</Text>
         <Text style={styles.paragraph}>
-          Antonio Jesús Sánchez Guirado, Delegado de Protección de Datos provincial de la
-          Diputación de Cádiz, en uso de las atribuciones que le son conferidas por el artículo
-          39 del Reglamento Europeo de Protección de Datos, emite el siguiente informe.
+          Antonio Jesús Sánchez Guirado, Delegado de Protección de Datos provincial de la Diputación
+          de Cádiz, emite el siguiente informe en el ejercicio de las funciones atribuidas por el
+          artículo 39 del Reglamento Europeo de Protección de Datos.
         </Text>
 
         <Text style={styles.title}>INFORME DEL DELEGADO DE PROTECCIÓN DE DATOS</Text>
-
         <Text style={styles.sectionTitle}>ANTECEDENTES DE HECHO</Text>
         <Text style={styles.item}>1. {data.hecho1}</Text>
         <Text style={styles.item}>2. {data.hecho2}</Text>
         <Text style={styles.item}>3. {data.hecho3}</Text>
-
         <Text style={styles.sectionTitle}>NORMATIVA</Text>
         <Text style={styles.item}>1. {data.normativa1}</Text>
         <Text style={styles.item}>2. {data.normativa2}</Text>
         <Text style={styles.item}>3. {data.normativa3}</Text>
-
         <Text style={styles.sectionTitle}>FUNDAMENTOS DE DERECHO</Text>
         <Text style={styles.paragraph}>{data.derechos1}</Text>
-
         <Text style={styles.sectionTitle}>CONCLUSIONES</Text>
         <Text style={styles.paragraph}>{data.conclusion1}</Text>
-
-        {data.llevaOficioRemision ? (
-          <Text style={styles.paragraph}>
-            Se da traslado de este informe a {data.personaRemision} para su conocimiento y efectos
-            oportunos.
-          </Text>
-        ) : null}
 
         <View style={styles.signatures}>
           {signatures.map((signature) => (
