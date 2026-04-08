@@ -12,13 +12,23 @@ const signersSchema = z.object({
   coordinador: z.boolean()
 });
 
+const nonEmptyStringArraySchema = (label: string) =>
+  z
+    .array(z.string().trim())
+    .min(1, `${label} debe tener al menos un elemento.`)
+    .refine((items) => items.some((item) => item.length > 0), {
+      message: `${label} debe tener al menos un elemento rellenado.`
+    });
+
 export const reportFormSchema = z
   .object({
     ayuntamientoId: z.string().min(1, `${FIELD_LABELS.ayuntamientoId} es obligatorio.`),
     expedienteId: z.string(),
-    tipoTramite: z.enum(['requerimiento_ctpda', 'peticion_general'] satisfies [TramiteType, TramiteType]),
+    tipoTramite: z.enum(
+      ['requerimiento_ctpda', 'peticion_general'] satisfies [TramiteType, TramiteType]
+    ),
     llevaOficioRemision: z.boolean(),
-    numeroInforme: z.string().min(1, 'Número de informe es obligatorio.'),
+    numeroInforme: z.string().min(1, 'Numero de informe es obligatorio.'),
     numeroSael: z.string(),
     numeroExterno: z.string(),
     numeroRcon: z.string(),
@@ -26,7 +36,7 @@ export const reportFormSchema = z
       .string()
       .min(1, 'Fecha de solicitud es obligatoria.')
       .refine((value) => !Number.isNaN(new Date(value).getTime()), {
-        message: 'Fecha de solicitud debe tener formato de fecha válido.'
+        message: 'Fecha de solicitud debe tener formato de fecha valido.'
       }),
     fechaResolucion: z.string(),
     servicio: z.string(),
@@ -46,14 +56,12 @@ export const reportFormSchema = z
     personaRemision: z.string(),
     inicialesResponsable: z.string().min(1, 'Iniciales responsable es obligatorio.'),
     inicialesRedactor: z.string().min(1, 'Iniciales redactor es obligatorio.'),
-    hecho1: z.string(),
-    hecho2: z.string(),
-    hecho3: z.string(),
-    normativa1: z.string(),
-    normativa2: z.string(),
-    normativa3: z.string(),
-    derechos1: z.string(),
-    conclusion1: z.string(),
+    antecedentesHecho: nonEmptyStringArraySchema('Antecedentes de hecho'),
+    normativaObligatoria: z.string().min(1, 'Normativa obligatoria es obligatoria.'),
+    normativasOpcionales: z.array(z.string()),
+    normativaAdicional: z.string(),
+    fundamentosDerecho: nonEmptyStringArraySchema('Fundamentos de derecho'),
+    conclusiones: nonEmptyStringArraySchema('Conclusiones'),
     logoUrl: z.string(),
     firmantes: signersSchema
   })
@@ -84,7 +92,7 @@ export const reportFormSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['codigoDir3'],
-        message: 'Código DIR3 es obligatorio para generar oficio de remisión.'
+        message: 'Codigo DIR3 es obligatorio para generar oficio de remision.'
       });
     }
 

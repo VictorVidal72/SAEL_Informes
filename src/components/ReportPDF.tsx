@@ -129,17 +129,39 @@ interface ReportPDFProps {
   payload: ReportPdfPayload;
 }
 
+function compactItems(values: string[]) {
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+function buildNormativaItems(data: ReportPdfPayload['data']) {
+  return [
+    data.normativaObligatoria.trim(),
+    ...compactItems(data.normativasOpcionales),
+    data.normativaAdicional.trim()
+  ].filter(Boolean);
+}
+
 export default function ReportPDF({ payload }: ReportPDFProps) {
   const { data } = payload;
+  const antecedentes = compactItems(data.antecedentesHecho);
+  const normativa = buildNormativaItems(data);
+  const fundamentos = compactItems(data.fundamentosDerecho);
+  const conclusiones = compactItems(data.conclusiones);
   const signatures = [
     data.firmantes.delegado
-      ? { role: `El Delegado de Protección de Datos de ${data.municipio}`, name: 'Antonio Jesús Sánchez Guirado' }
+      ? {
+          role: `El Delegado de Proteccion de Datos de ${data.municipio}`,
+          name: 'Antonio Jesus Sanchez Guirado'
+        }
       : null,
     data.firmantes.diputado
-      ? { role: 'El Diputado de Asistencia a Municipios', name: 'Antonio Jesús Aragón Dorca' }
+      ? {
+          role: 'El Diputado de Asistencia a Municipios',
+          name: 'Antonio Jesus Aragon Dorca'
+        }
       : null,
     data.firmantes.coordinador
-      ? { role: 'El coordinador del SAEL', name: 'Óscar Palma Delgado' }
+      ? { role: 'El coordinador del SAEL', name: 'Oscar Palma Delgado' }
       : null
   ].filter(Boolean) as Array<{ role: string; name: string }>;
 
@@ -152,19 +174,31 @@ export default function ReportPDF({ payload }: ReportPDFProps) {
         <View style={styles.topBar}>
           <View style={styles.spacer} />
           <View style={styles.institution}>
-            <Text style={styles.institutionTitle}>Diputación de Cádiz</Text>
+            <Text style={styles.institutionTitle}>Diputacion de Cadiz</Text>
             <Text style={styles.institutionLine}>Servicio de Asistencia a Entidades Locales</Text>
-            <Text style={styles.institutionLine}>Área de {data.area}</Text>
+            <Text style={styles.institutionLine}>Area de {data.area}</Text>
           </View>
         </View>
 
         <Text style={styles.code}>{payload.signatureCode}</Text>
 
         <View style={styles.meta}>
-          <Text style={styles.line}><Text style={styles.label}>Nº Informe: </Text>{data.numeroInforme}</Text>
-          <Text style={styles.line}><Text style={styles.label}>Nº Expediente SAEL: </Text>{data.numeroSael}</Text>
-          <Text style={styles.line}><Text style={styles.label}>Nº Expediente Externo: </Text>{data.numeroExterno}</Text>
-          <Text style={styles.line}><Text style={styles.label}>Nº Expediente RCON: </Text>{data.numeroRcon}</Text>
+          <Text style={styles.line}>
+            <Text style={styles.label}>Nº Informe: </Text>
+            {data.numeroInforme}
+          </Text>
+          <Text style={styles.line}>
+            <Text style={styles.label}>Nº Expediente SAEL: </Text>
+            {data.numeroSael}
+          </Text>
+          <Text style={styles.line}>
+            <Text style={styles.label}>Nº Expediente Externo: </Text>
+            {data.numeroExterno}
+          </Text>
+          <Text style={styles.line}>
+            <Text style={styles.label}>Nº Expediente RCON: </Text>
+            {data.numeroRcon}
+          </Text>
         </View>
 
         <View style={styles.assunto}>
@@ -173,24 +207,36 @@ export default function ReportPDF({ payload }: ReportPDFProps) {
 
         <Text style={styles.paragraph}>{payload.introduction}</Text>
         <Text style={styles.paragraph}>
-          Antonio Jesús Sánchez Guirado, Delegado de Protección de Datos provincial de la Diputación
-          de Cádiz, emite el siguiente informe en el ejercicio de las funciones atribuidas por el
-          artículo 39 del Reglamento Europeo de Protección de Datos.
+          Antonio Jesus Sanchez Guirado, Delegado de Proteccion de Datos provincial de la Diputacion
+          de Cadiz, emite el siguiente informe en el ejercicio de las funciones atribuidas por el
+          articulo 39 del Reglamento Europeo de Proteccion de Datos.
         </Text>
 
-        <Text style={styles.title}>INFORME DEL DELEGADO DE PROTECCIÓN DE DATOS</Text>
+        <Text style={styles.title}>INFORME DEL DELEGADO DE PROTECCION DE DATOS</Text>
         <Text style={styles.sectionTitle}>ANTECEDENTES DE HECHO</Text>
-        <Text style={styles.item}>1. {data.hecho1}</Text>
-        <Text style={styles.item}>2. {data.hecho2}</Text>
-        <Text style={styles.item}>3. {data.hecho3}</Text>
+        {antecedentes.map((item, index) => (
+          <Text key={`antecedente-${index}`} style={styles.item}>
+            {index + 1}. {item}
+          </Text>
+        ))}
         <Text style={styles.sectionTitle}>NORMATIVA</Text>
-        <Text style={styles.item}>1. {data.normativa1}</Text>
-        <Text style={styles.item}>2. {data.normativa2}</Text>
-        <Text style={styles.item}>3. {data.normativa3}</Text>
+        {normativa.map((item, index) => (
+          <Text key={`normativa-${index}`} style={styles.item}>
+            {index + 1}. {item}
+          </Text>
+        ))}
         <Text style={styles.sectionTitle}>FUNDAMENTOS DE DERECHO</Text>
-        <Text style={styles.paragraph}>{data.derechos1}</Text>
+        {fundamentos.map((item, index) => (
+          <Text key={`fundamento-${index}`} style={styles.item}>
+            {index + 1}. {item}
+          </Text>
+        ))}
         <Text style={styles.sectionTitle}>CONCLUSIONES</Text>
-        <Text style={styles.paragraph}>{data.conclusion1}</Text>
+        {conclusiones.map((item, index) => (
+          <Text key={`conclusion-${index}`} style={styles.item}>
+            {index + 1}. {item}
+          </Text>
+        ))}
 
         <View style={styles.signatures}>
           {signatures.map((signature) => (

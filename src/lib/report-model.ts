@@ -1,6 +1,9 @@
 import type { AyuntamientoRow, ContactoRow, ExpedienteRow } from './supabase';
 
 export const DEFAULT_LOGO_URL = '/Diputacion.png';
+export const DEFAULT_NORMATIVA_OBLIGATORIA =
+  'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.';
+export const NORMATIVAS_OPCIONALES = ['Ley de Transparencia', 'RGPD'] as const;
 
 export type TramiteType = 'requerimiento_ctpda' | 'peticion_general';
 
@@ -55,14 +58,12 @@ export interface ReportFormData {
   personaRemision: string;
   inicialesResponsable: string;
   inicialesRedactor: string;
-  hecho1: string;
-  hecho2: string;
-  hecho3: string;
-  normativa1: string;
-  normativa2: string;
-  normativa3: string;
-  derechos1: string;
-  conclusion1: string;
+  antecedentesHecho: string[];
+  normativaObligatoria: string;
+  normativasOpcionales: string[];
+  normativaAdicional: string;
+  fundamentosDerecho: string[];
+  conclusiones: string[];
   logoUrl: string;
   firmantes: SignersState;
 }
@@ -101,39 +102,37 @@ export const DB_MANAGED_FIELDS: DbManagedField[] = [
 export const FIELD_LABELS: Record<keyof ReportFormData, string> = {
   ayuntamientoId: 'Ayuntamiento',
   expedienteId: 'Expediente',
-  tipoTramite: 'Tipo de trámite',
-  llevaOficioRemision: 'Lleva oficio de remisión',
-  numeroInforme: 'Número de informe',
-  numeroSael: 'Número SAEL',
-  numeroExterno: 'Número Externo',
-  numeroRcon: 'Número RCON',
+  tipoTramite: 'Tipo de tramite',
+  llevaOficioRemision: 'Lleva oficio de remision',
+  numeroInforme: 'Numero de informe',
+  numeroSael: 'Numero SAEL',
+  numeroExterno: 'Numero Externo',
+  numeroRcon: 'Numero RCON',
   fechaSolicitud: 'Fecha de solicitud',
-  fechaResolucion: 'Fecha de resolución',
+  fechaResolucion: 'Fecha de resolucion',
   servicio: 'Servicio',
-  area: 'Área',
+  area: 'Area',
   asunto: 'Asunto',
   medioSolicitud: 'Medio de solicitud',
   municipio: 'Municipio',
   cif: 'CIF',
-  codigoDir3: 'Código DIR3',
-  direccion: 'Dirección',
+  codigoDir3: 'Codigo DIR3',
+  direccion: 'Direccion',
   tratamiento: 'Tratamiento',
   nombreRepresentante: 'Nombre del representante',
   cargoRepresentante: 'Cargo del representante',
   solicitanteNombre: 'Solicitante nombre',
   solicitanteApellido1: 'Solicitante apellido 1',
   solicitanteApellido2: 'Solicitante apellido 2',
-  personaRemision: 'Persona de remisión',
+  personaRemision: 'Persona de remision',
   inicialesResponsable: 'Iniciales responsable',
   inicialesRedactor: 'Iniciales redactor',
-  hecho1: 'Hecho 1',
-  hecho2: 'Hecho 2',
-  hecho3: 'Hecho 3',
-  normativa1: 'Normativa 1',
-  normativa2: 'Normativa 2',
-  normativa3: 'Normativa 3',
-  derechos1: 'Fundamentos de derecho',
-  conclusion1: 'Conclusión',
+  antecedentesHecho: 'Antecedentes de hecho',
+  normativaObligatoria: 'Normativa obligatoria',
+  normativasOpcionales: 'Normativas opcionales',
+  normativaAdicional: 'Normativa adicional',
+  fundamentosDerecho: 'Fundamentos de derecho',
+  conclusiones: 'Conclusiones',
   logoUrl: 'Logo URL',
   firmantes: 'Firmantes'
 };
@@ -152,8 +151,8 @@ export function createEmptyReportForm(): ReportFormData {
     fechaResolucion: '',
     servicio: 'Servicio de Asistencia a Entidades Locales',
     area: 'Asistencia a Municipios',
-    asunto: 'Nombramiento de Delegado de Protección de Datos',
-    medioSolicitud: 'Sede electrónica',
+    asunto: 'Nombramiento de Delegado de Proteccion de Datos',
+    medioSolicitud: 'Sede electronica',
     municipio: '',
     cif: '',
     codigoDir3: '',
@@ -167,14 +166,12 @@ export function createEmptyReportForm(): ReportFormData {
     personaRemision: '',
     inicialesResponsable: '',
     inicialesRedactor: '',
-    hecho1: '',
-    hecho2: '',
-    hecho3: '',
-    normativa1: '',
-    normativa2: '',
-    normativa3: '',
-    derechos1: '',
-    conclusion1: '',
+    antecedentesHecho: [''],
+    normativaObligatoria: DEFAULT_NORMATIVA_OBLIGATORIA,
+    normativasOpcionales: [],
+    normativaAdicional: '',
+    fundamentosDerecho: [''],
+    conclusiones: [''],
     logoUrl: DEFAULT_LOGO_URL,
     firmantes: {
       delegado: true,
@@ -186,6 +183,43 @@ export function createEmptyReportForm(): ReportFormData {
 
 function normalizeText(value: string | null | undefined): string {
   return value?.trim() ?? '';
+}
+
+function normalizeStringArray(values: string[] | null | undefined): string[] {
+  return (values ?? []).map((value) => value.trim());
+}
+
+function hasMeaningfulContent(values: string[] | null | undefined): boolean {
+  return normalizeStringArray(values).some(Boolean);
+}
+
+function formatNumberedSection(values: string[]): string {
+  const normalizedValues = normalizeStringArray(values).filter(Boolean);
+
+  if (normalizedValues.length === 0) {
+    return '(Sin contenido)';
+  }
+
+  return normalizedValues.map((value, index) => `${index + 1}. ${value}`).join('\n');
+}
+
+function formatNormativaSection(
+  values: Pick<
+    ReportFormData,
+    'normativaObligatoria' | 'normativasOpcionales' | 'normativaAdicional'
+  >
+): string {
+  const items = [
+    values.normativaObligatoria.trim(),
+    ...normalizeStringArray(values.normativasOpcionales).filter(Boolean),
+    values.normativaAdicional.trim()
+  ].filter(Boolean);
+
+  if (items.length === 0) {
+    return '(Sin contenido)';
+  }
+
+  return items.map((value, index) => `${index + 1}. ${value}`).join('\n');
 }
 
 export function formatInputDate(value: string | null | undefined): string {
@@ -272,14 +306,12 @@ export function mapDbDataToForm(
       normalizeText(expediente?.medio_solicitud) || currentValues.medioSolicitud,
     inicialesResponsable: currentValues.inicialesResponsable,
     inicialesRedactor: currentValues.inicialesRedactor,
-    hecho1: currentValues.hecho1,
-    hecho2: currentValues.hecho2,
-    hecho3: currentValues.hecho3,
-    normativa1: currentValues.normativa1,
-    normativa2: currentValues.normativa2,
-    normativa3: currentValues.normativa3,
-    derechos1: currentValues.derechos1,
-    conclusion1: currentValues.conclusion1,
+    antecedentesHecho: [...currentValues.antecedentesHecho],
+    normativaObligatoria: currentValues.normativaObligatoria,
+    normativasOpcionales: [...currentValues.normativasOpcionales],
+    normativaAdicional: currentValues.normativaAdicional,
+    fundamentosDerecho: [...currentValues.fundamentosDerecho],
+    conclusiones: [...currentValues.conclusiones],
     logoUrl: currentValues.logoUrl,
     firmantes: currentValues.firmantes,
     ayuntamientoId: String(ayuntamiento.id),
@@ -338,11 +370,15 @@ export function buildApplicantFullName(values: ReportFormData): string {
     .join(' ');
 }
 
-export function requiresRemisionDocument(values: Pick<ReportFormData, 'tipoTramite' | 'llevaOficioRemision'>): boolean {
+export function requiresRemisionDocument(
+  values: Pick<ReportFormData, 'tipoTramite' | 'llevaOficioRemision'>
+): boolean {
   return values.tipoTramite === 'requerimiento_ctpda' || values.llevaOficioRemision;
 }
 
-export function getRequiredFieldsByTramite(values: Pick<ReportFormData, 'tipoTramite' | 'llevaOficioRemision'>): Array<keyof ReportFormData> {
+export function getRequiredFieldsByTramite(
+  values: Pick<ReportFormData, 'tipoTramite' | 'llevaOficioRemision'>
+): Array<keyof ReportFormData> {
   const baseFields: Array<keyof ReportFormData> = [
     'ayuntamientoId',
     'tipoTramite',
@@ -351,7 +387,10 @@ export function getRequiredFieldsByTramite(values: Pick<ReportFormData, 'tipoTra
     'medioSolicitud',
     'asunto',
     'inicialesResponsable',
-    'inicialesRedactor'
+    'inicialesRedactor',
+    'antecedentesHecho',
+    'fundamentosDerecho',
+    'conclusiones'
   ];
 
   if (values.tipoTramite === 'requerimiento_ctpda') {
@@ -375,7 +414,13 @@ export function buildChecklist(
 
   for (const field of requiredFields) {
     const rawValue = values[field];
-    const stringValue = typeof rawValue === 'string' ? rawValue.trim() : '';
+    const stringValue = Array.isArray(rawValue)
+      ? hasMeaningfulContent(rawValue)
+        ? `${rawValue.filter((value) => value.trim() !== '').length} elementos`
+        : ''
+      : typeof rawValue === 'string'
+        ? rawValue.trim()
+        : '';
     const item: ChecklistItem = {
       field,
       label: FIELD_LABELS[field],
@@ -397,8 +442,8 @@ export function buildReportPreview(values: ReportFormData): string {
   const applicant = buildApplicantFullName(values);
   const signatureCode = buildSignatureCode(values);
   const introduction = requiresRemisionDocument(values)
-    ? `Recibida petición mediante ${values.medioSolicitud} de fecha ${formatDisplayDate(values.fechaSolicitud)} de ${applicant} del ${values.servicio} del Área de ${values.area} del Ayuntamiento de ${values.municipio}, solicitando asistencia técnica en materia de Protección de Datos.`
-    : `Se emite informe en relación con el expediente ${values.numeroSael} del Ayuntamiento de ${values.municipio}.`;
+    ? `Recibida peticion mediante ${values.medioSolicitud} de fecha ${formatDisplayDate(values.fechaSolicitud)} de ${applicant} del ${values.servicio} del Area de ${values.area} del Ayuntamiento de ${values.municipio}, solicitando asistencia tecnica en materia de Proteccion de Datos.`
+    : `Se emite informe en relacion con el expediente ${values.numeroSael} del Ayuntamiento de ${values.municipio}.`;
 
   return `${signatureCode}
 
@@ -412,18 +457,14 @@ ASUNTO: Informe sobre ${values.asunto}.
 ${introduction}
 
 ANTECEDENTES DE HECHO:
-1. ${values.hecho1}
-2. ${values.hecho2}
-3. ${values.hecho3}
+${formatNumberedSection(values.antecedentesHecho)}
 
 NORMATIVA:
-1. ${values.normativa1}
-2. ${values.normativa2}
-3. ${values.normativa3}
+${formatNormativaSection(values)}
 
 FUNDAMENTOS DE DERECHO:
-${values.derechos1}
+${formatNumberedSection(values.fundamentosDerecho)}
 
 CONCLUSIONES:
-${values.conclusion1}`;
+${formatNumberedSection(values.conclusiones)}`;
 }
