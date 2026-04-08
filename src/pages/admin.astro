@@ -1,0 +1,8 @@
+---
+import AdminDashboard from '../components/admin/AdminDashboard';
+import AppLayout from '../layouts/AppLayout.astro';
+---
+
+<AppLayout title="Panel de Administración | SAEL REPORTS">
+  <AdminDashboard client:only="react" />
+</AppLayout>

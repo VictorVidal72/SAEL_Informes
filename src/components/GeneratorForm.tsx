@@ -535,6 +535,13 @@ export default function GeneratorForm() {
               SAEL REPORTS
             </h1>
           </div>
+
+          <a
+            href="/admin"
+            className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/20"
+          >
+            ⚙️ Panel de Administración
+          </a>
         </div>
       </div>
 

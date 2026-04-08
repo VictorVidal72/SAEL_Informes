@@ -52,3 +52,24 @@ export interface ExpedienteRow {
   tipo_procedimiento: string | null;
   medio_solicitud: string | null;
 }
+
+export interface NormativaRow {
+  id: string;
+  titulo: string;
+  texto_legal: string | null;
+  categoria: string | null;
+  es_obligatoria: boolean | null;
+  created_at: string | null;
+}
+
+export interface InformeRow {
+  id: string;
+  expediente_id: string | null;
+  nombre_informe: string | null;
+  datos_formulario: Record<string, unknown>;
+  pdf_url: string | null;
+  generado_por: string | null;
+  created_at: string | null;
+  requiere_oficio_remision: boolean | null;
+  iniciales_firmantes: string | null;
+}
