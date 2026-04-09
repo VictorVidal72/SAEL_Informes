@@ -41,6 +41,13 @@ export interface ReportFormData {
   numeroRcon: string;
   fechaSolicitud: string;
   fechaResolucion: string;
+  plazo_respuesta: string;
+  instrucciones_contestar: string;
+  peticionario_nombre: string;
+  peticionario_apellidos: string;
+  peticionario_correo: string;
+  peticionario_telefono: string;
+  peticionario_puesto: string;
   servicio: string;
   area: string;
   asunto: string;
@@ -110,6 +117,13 @@ export const FIELD_LABELS: Record<keyof ReportFormData, string> = {
   numeroRcon: 'Numero RCON',
   fechaSolicitud: 'Fecha de solicitud',
   fechaResolucion: 'Fecha de resolucion',
+  plazo_respuesta: 'Plazo de respuesta',
+  instrucciones_contestar: 'Instrucciones para contestar',
+  peticionario_nombre: 'Peticionario nombre',
+  peticionario_apellidos: 'Peticionario apellidos',
+  peticionario_correo: 'Peticionario correo',
+  peticionario_telefono: 'Peticionario telefono',
+  peticionario_puesto: 'Peticionario puesto',
   servicio: 'Servicio',
   area: 'Area',
   asunto: 'Asunto',
@@ -149,6 +163,13 @@ export function createEmptyReportForm(): ReportFormData {
     numeroRcon: '',
     fechaSolicitud: '',
     fechaResolucion: '',
+    plazo_respuesta: '',
+    instrucciones_contestar: '',
+    peticionario_nombre: '',
+    peticionario_apellidos: '',
+    peticionario_correo: '',
+    peticionario_telefono: '',
+    peticionario_puesto: '',
     servicio: 'Servicio de Asistencia a Entidades Locales',
     area: 'Asistencia a Municipios',
     asunto: 'Nombramiento de Delegado de Proteccion de Datos',
@@ -299,6 +320,19 @@ export function mapDbDataToForm(
     numeroInforme: normalizeText(expediente?.num_informe) || currentValues.numeroInforme,
     numeroExterno:
       normalizeText(expediente?.num_expediente_externo) || currentValues.numeroExterno,
+    plazo_respuesta: normalizeText(expediente?.plazo_respuesta) || currentValues.plazo_respuesta,
+    instrucciones_contestar:
+      normalizeText(expediente?.instrucciones_contestar) || currentValues.instrucciones_contestar,
+    peticionario_nombre:
+      normalizeText(expediente?.peticionario_nombre) || currentValues.peticionario_nombre,
+    peticionario_apellidos:
+      normalizeText(expediente?.peticionario_apellidos) || currentValues.peticionario_apellidos,
+    peticionario_correo:
+      normalizeText(expediente?.peticionario_correo) || currentValues.peticionario_correo,
+    peticionario_telefono:
+      normalizeText(expediente?.peticionario_telefono) || currentValues.peticionario_telefono,
+    peticionario_puesto:
+      normalizeText(expediente?.peticionario_puesto) || currentValues.peticionario_puesto,
     servicio: currentValues.servicio,
     area: currentValues.area,
     asunto: normalizeText(expediente?.asunto) || currentValues.asunto,
@@ -348,6 +382,19 @@ export function applyExpedienteToForm(
     numeroRcon: normalizeText(expediente?.num_expediente_rcon),
     fechaSolicitud: formatInputDate(expediente?.fecha_solicitud),
     fechaResolucion: formatInputDate(expediente?.fecha_resolucion),
+    plazo_respuesta: normalizeText(expediente?.plazo_respuesta) || currentValues.plazo_respuesta,
+    instrucciones_contestar:
+      normalizeText(expediente?.instrucciones_contestar) || currentValues.instrucciones_contestar,
+    peticionario_nombre:
+      normalizeText(expediente?.peticionario_nombre) || currentValues.peticionario_nombre,
+    peticionario_apellidos:
+      normalizeText(expediente?.peticionario_apellidos) || currentValues.peticionario_apellidos,
+    peticionario_correo:
+      normalizeText(expediente?.peticionario_correo) || currentValues.peticionario_correo,
+    peticionario_telefono:
+      normalizeText(expediente?.peticionario_telefono) || currentValues.peticionario_telefono,
+    peticionario_puesto:
+      normalizeText(expediente?.peticionario_puesto) || currentValues.peticionario_puesto,
     asunto: normalizeText(expediente?.asunto) || currentValues.asunto,
     medioSolicitud:
       normalizeText(expediente?.medio_solicitud) || currentValues.medioSolicitud
@@ -386,8 +433,6 @@ export function getRequiredFieldsByTramite(
     'fechaSolicitud',
     'medioSolicitud',
     'asunto',
-    'inicialesResponsable',
-    'inicialesRedactor',
     'antecedentesHecho',
     'fundamentosDerecho',
     'conclusiones'

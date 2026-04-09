@@ -51,6 +51,13 @@ export interface ExpedienteRow {
   asunto: string | null;
   tipo_procedimiento: string | null;
   medio_solicitud: string | null;
+  plazo_respuesta: string | null;
+  instrucciones_contestar: string | null;
+  peticionario_nombre: string | null;
+  peticionario_apellidos: string | null;
+  peticionario_correo: string | null;
+  peticionario_telefono: string | null;
+  peticionario_puesto: string | null;
 }
 
 export interface NormativaRow {

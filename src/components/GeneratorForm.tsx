@@ -25,6 +25,11 @@ import { reportFormSchema } from '../lib/report-validation';
 import { inferirTratamiento } from '../lib/string-utils';
 import { generarYGuardarPDF } from '../services/pdf-documents.service';
 import {
+  extractPdfSourceDocuments,
+  uploadPdfSourceDocuments,
+  type UploadedPdfSource
+} from '../services/pdf-source-documents.service';
+import {
   fetchAyuntamientoBundle,
   fetchAyuntamientos
 } from '../services/report-data.service';
@@ -37,6 +42,13 @@ type ToastState = {
   type: 'success' | 'error';
   message: string;
 };
+type HighlightableField =
+  | 'numeroRcon'
+  | 'fechaSolicitud'
+  | 'plazo_respuesta'
+  | 'peticionario_nombre'
+  | 'codigoDir3'
+  | 'instrucciones_contestar';
 
 function createManualEditMap(): ManualEditMap {
   return DB_MANAGED_FIELDS.reduce<ManualEditMap>((accumulator, field) => {
@@ -237,6 +249,9 @@ export default function GeneratorForm() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingDocumentName, setGeneratingDocumentName] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [isAnalyzingPdf, setIsAnalyzingPdf] = useState(false);
+  const [highlightedFields, setHighlightedFields] = useState<Set<HighlightableField>>(new Set());
+  const [uploadedPdfSources, setUploadedPdfSources] = useState<UploadedPdfSource[]>([]);
 
   const {
     control,
@@ -336,6 +351,7 @@ export default function GeneratorForm() {
         setExpedientes([]);
         setManualEdits(createManualEditMap());
         setDbLoadedFields(new Set());
+        setUploadedPdfSources([]);
         return;
       }
 
@@ -411,6 +427,10 @@ export default function GeneratorForm() {
     void trigger();
   }, [expedientes, getValues, reset, trigger, values.expedienteId]);
 
+  useEffect(() => {
+    setUploadedPdfSources([]);
+  }, [values.expedienteId]);
+
   const filteredAyuntamientos = ayuntamientos.filter((item) => {
     const normalized = searchTerm.trim().toLowerCase();
     if (!normalized) {
@@ -438,6 +458,165 @@ export default function GeneratorForm() {
     }
 
     setPreviewMode(mode);
+  }
+
+  function getFieldClass(hasError?: boolean, isHighlighted?: boolean) {
+    if (hasError) {
+      return 'border-red-300 focus:border-red-500 focus:ring-red-100';
+    }
+
+    if (isHighlighted) {
+      return 'border-emerald-300 bg-emerald-50/70 text-slate-900 focus:border-emerald-500 focus:ring-emerald-100';
+    }
+
+    return 'border-slate-300 bg-white text-slate-900 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200';
+  }
+
+  function highlightAutofilledFields(fields: HighlightableField[]) {
+    const nextFields = new Set(fields);
+    setHighlightedFields(nextFields);
+
+    window.setTimeout(() => {
+      setHighlightedFields(new Set());
+    }, 3500);
+  }
+
+  function applyAutofillValue(
+    field: HighlightableField,
+    value: string,
+    mappedValues: Partial<Record<HighlightableField, string>>,
+    fieldsToHighlight: HighlightableField[]
+  ) {
+    const normalizedValue = value.trim();
+
+    if (!normalizedValue) {
+      return;
+    }
+
+    setValue(field, normalizedValue, {
+      shouldValidate: true,
+      shouldDirty: true,
+      shouldTouch: true
+    });
+    mappedValues[field] = normalizedValue;
+    fieldsToHighlight.push(field);
+  }
+
+  async function handlePdfAutofill(files: File[]) {
+    setIsAnalyzingPdf(true);
+
+    try {
+      const expedienteId = getValues('expedienteId') || undefined;
+      let uploadWarning = '';
+
+      const [analysisResult, uploadedDocuments] = await Promise.all([
+        extractPdfSourceDocuments(files),
+        uploadPdfSourceDocuments(files, expedienteId).catch((error) => {
+          uploadWarning =
+            error instanceof Error
+              ? error.message
+              : 'Los documentos se analizaron, pero no se pudieron guardar en Storage.';
+          return [];
+        })
+      ]);
+
+      if (uploadedDocuments.length > 0) {
+        setUploadedPdfSources((current) => [...uploadedDocuments, ...current]);
+      }
+
+      const payload = analysisResult.merged;
+      const fieldsToHighlight: HighlightableField[] = [];
+      const mappedValues: Partial<Record<HighlightableField, string>> = {};
+
+      if (payload.referencia_rcon) {
+        applyAutofillValue(
+          'numeroRcon',
+          payload.referencia_rcon,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.fecha_registro) {
+        applyAutofillValue(
+          'fechaSolicitud',
+          payload.fecha_registro,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.plazo_respuesta) {
+        applyAutofillValue(
+          'plazo_respuesta',
+          payload.plazo_respuesta,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.peticionario_nombre) {
+        applyAutofillValue(
+          'peticionario_nombre',
+          payload.peticionario_nombre,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.codigo_dir_destino) {
+        applyAutofillValue(
+          'codigoDir3',
+          payload.codigo_dir_destino,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      const instruccionesDetectadas = [
+        payload.codigo_dir_origen
+          ? `Codigo DIR origen detectado: ${payload.codigo_dir_origen}.`
+          : '',
+        payload.codigo_dir_destino
+          ? `Codigo DIR destino detectado: ${payload.codigo_dir_destino}.`
+          : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      if (instruccionesDetectadas) {
+        applyAutofillValue(
+          'instrucciones_contestar',
+          instruccionesDetectadas,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (fieldsToHighlight.length > 0) {
+        highlightAutofilledFields(fieldsToHighlight);
+        setToast({
+          type: 'success',
+          message: uploadWarning
+            ? `Documentos analizados y campos autocompletados. ${uploadWarning}`
+            : `Documentos analizados y campos autocompletados (${files.length}).`
+        });
+      } else {
+        setToast({
+          type: 'error',
+          message: uploadWarning
+            ? `No se detectaron datos aprovechables en los PDFs. ${uploadWarning}`
+            : 'No se detectaron datos aprovechables en los PDFs.'
+        });
+      }
+    } catch (error) {
+      setToast({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'No se pudo analizar el documento.'
+      });
+    } finally {
+      setIsAnalyzingPdf(false);
+    }
   }
 
   async function handleGenerateDocument(
@@ -513,8 +692,8 @@ export default function GeneratorForm() {
           className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${
             isReadonly(field)
               ? 'border-slate-200 bg-slate-100 text-slate-500'
-              : 'border-slate-300 bg-white text-slate-900 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200'
-          } ${errors[field] ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : ''}`}
+              : getFieldClass(Boolean(errors[field]), highlightedFields.has(field as HighlightableField))
+          } ${errors[field] && isReadonly(field) ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : ''}`}
         />
         {errors[field] ? (
           <p className="text-xs font-medium text-red-600">{errors[field]?.message}</p>
@@ -636,6 +815,263 @@ export default function GeneratorForm() {
                     )}
                   />
                 </label>
+              </div>
+
+              <div className="mt-4 rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-[#16324f]">
+                      Bandeja de documentos fuente
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Sube uno o varios PDFs para guardarlos en el bucket y autocompletar con la mejor coincidencia combinada.
+                    </p>
+                  </div>
+
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl bg-[#16324f] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#23486f]">
+                    {isAnalyzingPdf ? 'Analizando documentos...' : 'Seleccionar PDFs'}
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      multiple
+                      disabled={isAnalyzingPdf}
+                      className="sr-only"
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        if (files.length > 0) {
+                          void handlePdfAutofill(files);
+                        }
+                        event.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {uploadedPdfSources.length > 0 ? (
+                  <div className="mt-4 rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[#16324f]">
+                          PDFs fuente guardados en Storage
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Se guardan en el bucket `informes` dentro de la carpeta del expediente actual.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                        {uploadedPdfSources.length} archivo(s)
+                      </span>
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {uploadedPdfSources.map((item) => (
+                        <div
+                          key={item.filePath}
+                          className="flex flex-col gap-2 rounded-2xl border border-slate-200 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-800">
+                              {item.fileName}
+                            </p>
+                            <p className="mt-1 truncate text-xs text-slate-500">
+                              {item.filePath}
+                            </p>
+                          </div>
+                          <a
+                            href={item.publicUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex shrink-0 items-center justify-center rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            Abrir PDF
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {false ? (
+                <div className="mt-4 rounded-[1.5rem] border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-semibold text-emerald-900">
+                        Debug de Extracción PDF
+                      </h2>
+                      <p className="mt-1 text-sm text-emerald-700">
+                        Valores detectados en el documento y valores insertados en el formulario.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPdfDebug(null)}
+                      className="rounded-full border border-emerald-300 px-3 py-1 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                    >
+                      Ocultar
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                      <p className="text-sm font-semibold text-emerald-900">
+                        Campos rescatados del PDF
+                      </p>
+                      <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-950 px-4 py-3 text-xs text-emerald-100">
+{JSON.stringify(pdfDebug.extracted, null, 2)}
+                      </pre>
+                    </div>
+
+                    <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                      <p className="text-sm font-semibold text-emerald-900">
+                        Campos insertados en la plantilla
+                      </p>
+                      <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-slate-950 px-4 py-3 text-xs text-emerald-100">
+{JSON.stringify(
+  {
+    ...pdfDebug.mapped,
+    snapshotFormulario: {
+      numeroRcon: values.numeroRcon,
+      fechaSolicitud: values.fechaSolicitud,
+      plazo_respuesta: values.plazo_respuesta,
+      peticionario_nombre: values.peticionario_nombre,
+      codigoDir3: values.codigoDir3,
+      instrucciones_contestar: values.instrucciones_contestar
+    }
+  },
+  null,
+  2
+)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-4 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-4">
+                  <h2 className="text-base font-semibold text-[#16324f]">
+                    Datos Adicionales del Expediente
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Metadatos adicionales cargados desde el expediente o editables manualmente.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">
+                      {FIELD_LABELS.plazo_respuesta}
+                    </span>
+                    <input
+                      {...register('plazo_respuesta')}
+                      className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                        Boolean(errors.plazo_respuesta),
+                        highlightedFields.has('plazo_respuesta')
+                      )}`}
+                    />
+                  </label>
+
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">
+                      {FIELD_LABELS.medioSolicitud}
+                    </span>
+                    <input
+                      {...register('medioSolicitud')}
+                      className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                        Boolean(errors.medioSolicitud)
+                      )}`}
+                    />
+                    {errors.medioSolicitud ? (
+                      <p className="text-xs font-medium text-red-600">
+                        {errors.medioSolicitud.message}
+                      </p>
+                    ) : null}
+                  </label>
+
+                  <label className="space-y-2 md:col-span-2">
+                    <span className="text-sm font-medium text-slate-700">
+                      {FIELD_LABELS.instrucciones_contestar}
+                    </span>
+                    <textarea
+                      {...register('instrucciones_contestar')}
+                      className={`min-h-36 w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                        Boolean(errors.instrucciones_contestar),
+                        highlightedFields.has('instrucciones_contestar')
+                      )}`}
+                      placeholder="Resume aqui las instrucciones para contestar el expediente."
+                    />
+                  </label>
+                </div>
+
+                <details className="mt-4 overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white">
+                  <summary className="cursor-pointer list-none px-4 py-4 text-sm font-semibold text-[#16324f]">
+                    Datos del Peticionario (Si es distinto al solicitante)
+                  </summary>
+                  <div className="grid gap-4 border-t border-slate-200 px-4 py-4 md:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {FIELD_LABELS.peticionario_nombre}
+                      </span>
+                      <input
+                        {...register('peticionario_nombre')}
+                        className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                          Boolean(errors.peticionario_nombre),
+                          highlightedFields.has('peticionario_nombre')
+                        )}`}
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {FIELD_LABELS.peticionario_apellidos}
+                      </span>
+                      <input
+                        {...register('peticionario_apellidos')}
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {FIELD_LABELS.peticionario_correo}
+                      </span>
+                      <input
+                        {...register('peticionario_correo')}
+                        className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${
+                          errors.peticionario_correo
+                            ? 'border-red-300 focus:border-red-500 focus:ring-red-100'
+                            : 'border-slate-300 bg-white text-slate-900 focus:border-[#16324f] focus:ring-4 focus:ring-slate-200'
+                        }`}
+                      />
+                      {errors.peticionario_correo ? (
+                        <p className="text-xs font-medium text-red-600">
+                          {errors.peticionario_correo.message}
+                        </p>
+                      ) : null}
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {FIELD_LABELS.peticionario_telefono}
+                      </span>
+                      <input
+                        {...register('peticionario_telefono')}
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                      />
+                    </label>
+
+                    <label className="space-y-2 md:col-span-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {FIELD_LABELS.peticionario_puesto}
+                      </span>
+                      <input
+                        {...register('peticionario_puesto')}
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
+                      />
+                    </label>
+                  </div>
+                </details>
               </div>
 
               <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">

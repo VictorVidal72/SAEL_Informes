@@ -24,8 +24,10 @@ export async function generarYGuardarPDF({
   formData
 }: GenerarYGuardarPdfParams): Promise<GeneratedPdfResult> {
   const blob = await pdf(pdfComponent as ReactPDF.Node).toBlob();
-  const expedienteId = formData.expedienteId || 'sin-expediente';
-  const fileName = `${nombreDocumento}_${expedienteId}_${Date.now()}.pdf`;
+  const expedienteId = formData.expedienteId.trim();
+  const expedienteIdForDb = expedienteId === '' ? null : expedienteId;
+  const expedienteSegment = expedienteIdForDb ?? 'sin-expediente';
+  const fileName = `${nombreDocumento}_${expedienteSegment}_${Date.now()}.pdf`;
   const filePath = fileName;
 
   const { error: uploadError } = await supabase.storage
@@ -48,7 +50,7 @@ export async function generarYGuardarPDF({
   }
 
   const { error: insertError } = await supabase.from('Informe').insert({
-    expediente_id: formData.expedienteId,
+    expediente_id: expedienteIdForDb,
     nombre_informe: nombreDocumento,
     datos_formulario: formData,
     pdf_url: publicUrl,

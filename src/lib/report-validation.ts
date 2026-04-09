@@ -20,6 +20,13 @@ const nonEmptyStringArraySchema = (label: string) =>
       message: `${label} debe tener al menos un elemento rellenado.`
     });
 
+const optionalEmailSchema = z
+  .string()
+  .trim()
+  .refine((value) => value === '' || z.email().safeParse(value).success, {
+    message: 'Peticionario correo debe tener un email valido.'
+  });
+
 export const reportFormSchema = z
   .object({
     ayuntamientoId: z.string().min(1, `${FIELD_LABELS.ayuntamientoId} es obligatorio.`),
@@ -39,6 +46,13 @@ export const reportFormSchema = z
         message: 'Fecha de solicitud debe tener formato de fecha valido.'
       }),
     fechaResolucion: z.string(),
+    plazo_respuesta: z.string(),
+    instrucciones_contestar: z.string(),
+    peticionario_nombre: z.string(),
+    peticionario_apellidos: z.string(),
+    peticionario_correo: optionalEmailSchema,
+    peticionario_telefono: z.string(),
+    peticionario_puesto: z.string(),
     servicio: z.string(),
     area: z.string(),
     asunto: z.string().min(5, 'Asunto debe tener al menos 5 caracteres.'),
@@ -66,20 +80,6 @@ export const reportFormSchema = z
     firmantes: signersSchema
   })
   .superRefine((values, context) => {
-    const initialsSignature = `${values.inicialesResponsable.trim()}/${values.inicialesRedactor.trim()}`;
-    if (!/^[A-Z]+\/[a-z]+$/.test(initialsSignature)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['inicialesResponsable'],
-        message: 'Iniciales firmantes debe seguir el formato MAYUSCULAS/minusculas.'
-      });
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['inicialesRedactor'],
-        message: 'Iniciales firmantes debe seguir el formato MAYUSCULAS/minusculas.'
-      });
-    }
-
     if (values.tipoTramite === 'requerimiento_ctpda' && values.numeroRcon.trim() === '') {
       context.addIssue({
         code: z.ZodIssueCode.custom,
