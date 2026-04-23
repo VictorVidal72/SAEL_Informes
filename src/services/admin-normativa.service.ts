@@ -1,9 +1,9 @@
 import { supabase, type NormativaRow } from '../lib/supabase';
 
 export interface NormativaInput {
-  titulo: string;
-  texto_legal: string;
-  categoria: string;
+  Nombre: string;
+  Nombre_completo: string;
+  Agrupación: string;
   es_obligatoria: boolean;
 }
 
@@ -24,9 +24,9 @@ export async function createNormativa(input: NormativaInput): Promise<NormativaR
   const { data, error } = await supabase
     .from('Normativa')
     .insert({
-      titulo: input.titulo,
-      texto_legal: input.texto_legal || null,
-      categoria: input.categoria || 'General',
+      Nombre: input.Nombre,
+      Nombre_completo: input.Nombre_completo || null,
+      Agrupación: input.Agrupación || 'General',
       es_obligatoria: input.es_obligatoria
     })
     .select('*')
@@ -46,9 +46,9 @@ export async function updateNormativa(
   const { data, error } = await supabase
     .from('Normativa')
     .update({
-      titulo: input.titulo,
-      texto_legal: input.texto_legal || null,
-      categoria: input.categoria || 'General',
+      Nombre: input.Nombre,
+      Nombre_completo: input.Nombre_completo || null,
+      Agrupación: input.Agrupación || 'General',
       es_obligatoria: input.es_obligatoria
     })
     .eq('id', id)

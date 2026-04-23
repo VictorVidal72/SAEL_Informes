@@ -90,9 +90,9 @@ const ADMIN_TABS: Array<{ id: AdminTabId; label: string; description: string }> 
 ];
 
 const EMPTY_NORMATIVA_FORM: NormativaFormState = {
-  titulo: '',
-  texto_legal: '',
-  categoria: 'General',
+  Nombre: '',
+  Nombre_completo: '',
+  Agrupación: 'General',
   es_obligatoria: false
 };
 
@@ -221,19 +221,19 @@ function NormativaModal({
 
         <div className="grid flex-1 gap-4 overflow-y-auto px-6 py-6 md:grid-cols-2">
           <label className="space-y-2 md:col-span-2">
-            <span className="text-sm font-medium text-slate-700">Titulo</span>
+            <span className="text-sm font-medium text-slate-700">Nombre</span>
             <input
-              value={values.titulo}
-              onChange={(event) => onChange({ ...values, titulo: event.target.value })}
+              value={values.Nombre}
+              onChange={(event) => onChange({ ...values, Nombre: event.target.value })}
               className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
             />
           </label>
 
           <label className="space-y-2">
-            <span className="text-sm font-medium text-slate-700">Categoria</span>
+            <span className="text-sm font-medium text-slate-700">Agrupacion</span>
             <input
-              value={values.categoria}
-              onChange={(event) => onChange({ ...values, categoria: event.target.value })}
+              value={values.Agrupación}
+              onChange={(event) => onChange({ ...values, Agrupación: event.target.value })}
               className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
             />
           </label>
@@ -251,10 +251,10 @@ function NormativaModal({
           </label>
 
           <label className="space-y-2 md:col-span-2">
-            <span className="text-sm font-medium text-slate-700">Texto legal</span>
+            <span className="text-sm font-medium text-slate-700">Nombre completo</span>
             <textarea
-              value={values.texto_legal}
-              onChange={(event) => onChange({ ...values, texto_legal: event.target.value })}
+              value={values.Nombre_completo}
+              onChange={(event) => onChange({ ...values, Nombre_completo: event.target.value })}
               className="min-h-48 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
             />
           </label>
@@ -271,7 +271,7 @@ function NormativaModal({
           <button
             type="button"
             onClick={onSubmit}
-            disabled={isSaving || values.titulo.trim() === ''}
+            disabled={isSaving || values.Nombre.trim() === ''}
             className="rounded-2xl bg-[#16324f] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#23486f] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {isSaving ? 'Guardando...' : mode === 'create' ? 'Crear Normativa' : 'Guardar Cambios'}
@@ -703,9 +703,9 @@ export default function AdminDashboard() {
   function openEditNormativaModal(normativa: NormativaRow) {
     setSelectedNormativaId(normativa.id);
     setNormativaForm({
-      titulo: normativa.titulo,
-      texto_legal: normativa.texto_legal ?? '',
-      categoria: normativa.categoria ?? 'General',
+      Nombre: normativa.Nombre,
+      Nombre_completo: normativa.Nombre_completo ?? '',
+      Agrupación: normativa.Agrupación ?? 'General',
       es_obligatoria: Boolean(normativa.es_obligatoria)
     });
     setNormativaModalMode('edit');
@@ -864,7 +864,7 @@ export default function AdminDashboard() {
 
   async function handleDeleteNormativa(normativa: NormativaRow) {
     const confirmed = window.confirm(
-      `¿Seguro que quieres borrar la normativa "${normativa.titulo}"?`
+      `¿Seguro que quieres borrar la normativa "${normativa.Nombre}"?`
     );
 
     if (!confirmed) {
@@ -964,11 +964,11 @@ export default function AdminDashboard() {
               <thead className="bg-slate-50">
                 <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-4">ID</th>
-                  <th className="px-4 py-4">Titulo</th>
-                  <th className="px-4 py-4">Categoria</th>
+                  <th className="px-4 py-4">Nombre</th>
+                  <th className="px-4 py-4">Agrupacion</th>
                   <th className="px-4 py-4">Obligatoria</th>
                   <th className="px-4 py-4">Creada</th>
-                  <th className="px-4 py-4">Texto legal</th>
+                  <th className="px-4 py-4">Nombre completo</th>
                   <th className="px-4 py-4 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -976,8 +976,8 @@ export default function AdminDashboard() {
                 {normativas.map((normativa) => (
                   <tr key={normativa.id} className="align-top">
                     <td className="px-4 py-4 font-mono text-xs text-slate-500">{normativa.id}</td>
-                    <td className="px-4 py-4 font-medium text-slate-900">{normativa.titulo}</td>
-                    <td className="px-4 py-4">{normativa.categoria ?? 'General'}</td>
+                    <td className="px-4 py-4 font-medium text-slate-900">{normativa.Nombre}</td>
+                    <td className="px-4 py-4">{normativa.Agrupación ?? 'General'}</td>
                     <td className="px-4 py-4">
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-semibold ${
@@ -994,7 +994,7 @@ export default function AdminDashboard() {
                     </td>
                     <td className="max-w-lg px-4 py-4 text-slate-600">
                       <div className="line-clamp-4 whitespace-pre-wrap">
-                        {normativa.texto_legal || 'Sin texto legal'}
+                        {normativa.Nombre_completo || 'Sin nombre completo'}
                       </div>
                     </td>
                     <td className="px-4 py-4">

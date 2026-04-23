@@ -1,4 +1,10 @@
-import { supabase, type AyuntamientoRow, type ContactoRow, type ExpedienteRow } from '../lib/supabase';
+import {
+  supabase,
+  type AyuntamientoRow,
+  type ContactoRow,
+  type ExpedienteRow,
+  type NormativaRow
+} from '../lib/supabase';
 import type { ReportDataBundle } from '../lib/report-model';
 
 function isActiveStatus(status: string | null): boolean {
@@ -63,4 +69,17 @@ export async function fetchAyuntamientoBundle(
     contactoPrincipal: contactos.find((item) => item.es_principal) ?? contactos.at(0) ?? null,
     expedientes
   };
+}
+
+export async function fetchNormativasForForm(): Promise<NormativaRow[]> {
+  const { data, error } = await supabase
+    .from('Normativa')
+    .select('*')
+    .order('Nombre', { ascending: true });
+
+  if (error) {
+    throw new Error(`No se pudo cargar Normativa: ${error.message}`);
+  }
+
+  return (data as NormativaRow[]) ?? [];
 }

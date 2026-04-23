@@ -62,9 +62,9 @@ export interface ExpedienteRow {
 
 export interface NormativaRow {
   id: string;
-  titulo: string;
-  texto_legal: string | null;
-  categoria: string | null;
+  Nombre: string;
+  Nombre_completo: string | null;
+  Agrupación: string | null;
   es_obligatoria: boolean | null;
   created_at: string | null;
 }

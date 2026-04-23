@@ -1,112 +1,117 @@
 export interface ExtractedPdfData {
-  referencia_rcon: string;
-  fecha_registro: string;
-  peticionario_nombre: string;
-  plazo_respuesta: string;
-  codigo_dir_origen: string;
-  codigo_dir_destino: string;
+  numero_rcon?: string;
+  numero_externo?: string;
+  fecha_solicitud?: string;
+  fecha_firma?: string;
+  peticionario_nombre?: string;
+  entidad_reclamada?: string;
+  motivo_reclamacion?: string;
+  asunto?: string;
+  plazo_respuesta?: string;
+  codigo_dir_origen?: string;
+  codigo_dir_destino?: string;
+  csv?: string;
+  url_validacion?: string;
 }
 
-function pickFirstMeaningful(...values: string[]): string {
-  return values.map((value) => normalizeWhitespace(value)).find(Boolean) ?? '';
-}
+export function extractPdfAdministrativeData(pdfText: string): ExtractedPdfData {
+  const data: ExtractedPdfData = {};
 
-function pickLongestMeaningful(...values: string[]): string {
-  return values
-    .map((value) => normalizeWhitespace(value))
-    .filter(Boolean)
-    .sort((left, right) => right.length - left.length)[0] ?? '';
-}
+  // Limpiamos el texto para que las búsquedas no fallen por saltos de página
+  const cleanText = pdfText.replace(/\r\n/g, '\n').replace(/\n{2,}/g, '\n');
 
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
-}
+  const matchRcon = cleanText.match(/(?:Ref\.|Expediente|RESUMEN)[^\w]*([A-Z]{2,3}-\d{4}\/\d{3,4})/i);
+  if (matchRcon && matchRcon[1]) data.numero_rcon = matchRcon[1].trim();
 
-function matchFirst(text: string, patterns: RegExp[]): string {
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) {
-      return normalizeWhitespace(match[1]);
-    }
+  const matchExterno = cleanText.match(/(?:Nº\s*REGISTRO|Número\s*de\s*registro)[\s:]*([A-Z0-9-]+)/i);
+  if (matchExterno && matchExterno[1]) data.numero_externo = matchExterno[1].trim();
+
+  const matchFechaSol = cleanText.match(/(?:Fecha\s*de\s*entrada|Fecha\s*y\s*hora(?:[\s\w]*))[\s:]*([\d]{2}[/-][\d]{2}[/-][\d]{4}|[\d]{1,2}\s+de\s+[a-z]+\s+de\s+[\d]{4})/i);
+  if (matchFechaSol && matchFechaSol[1]) data.fecha_solicitud = matchFechaSol[1].trim();
+
+  const matchAsunto = cleanText.match(/(?:Asunto|ASUNTO)\s*[:\-]\s*(.+)/i);
+  if (matchAsunto && matchAsunto[1]) data.asunto = matchAsunto[1].trim();
+
+  const matchEntidad = cleanText.match(/(?:Entidad reclamada|Entidad responsable de tratamiento)[\s\n]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]+?)(?:\n|DPD|Motivo|Cargo)/i);
+  if (matchEntidad && matchEntidad[1]) data.entidad_reclamada = matchEntidad[1].trim();
+
+  const matchMotivo = cleanText.match(/Motivo de la reclama-?\s*ción[\s\n]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s.,]+?)(?:\nEl artículo|El artículo|\nFIRMADO)/i);
+  if (matchMotivo && matchMotivo[1]) {
+    data.motivo_reclamacion = matchMotivo[1].replace(/-\s*\n\s*/g, '').replace(/\s+/g, ' ').trim();
   }
 
-  return '';
-}
+  const matchFechaFirma = cleanText.match(/(?:Fecha Firma:\s*|FIRMADO POR.*?\n.*?\n|PÁG\.\s*\d+\/\d+\s*\n)([\d]{2}\/[\d]{2}\/[\d]{4})/i);
+  if (matchFechaFirma && matchFechaFirma[1]) data.fecha_firma = matchFechaFirma[1].trim();
 
-function findCodeNearSection(text: string, sectionLabel: string): string {
-  const sectionPattern = new RegExp(
-    `${sectionLabel}[\\s\\S]{0,250}?\\b([AEL]\\d{5,})\\b`,
-    'i'
-  );
-  const match = text.match(sectionPattern);
-  return match?.[1] ?? '';
-}
+  const matchCsv = cleanText.match(/(?:código de VERIFICACIÓN|Cód\. Validación:|CSV:)[\s\n]*([A-Z0-9]{15,40})/i);
+  if (matchCsv && matchCsv[1]) data.csv = matchCsv[1].trim();
 
-function normalizeExtractedDate(rawValue: string): string {
-  const normalizedValue = normalizeWhitespace(rawValue);
-  const match = normalizedValue.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  const matchUrl = cleanText.match(/(https:\/\/[^\s]+(?:verificar|sedelectronica)[^\s]*)/i);
+  if (matchUrl && matchUrl[1]) data.url_validacion = matchUrl[1].trim();
 
-  if (!match) {
-    return normalizedValue;
+  const matchReclamante = cleanText.match(/Reclamante[\s\n]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]+)Representante/i);
+  if (matchReclamante && matchReclamante[1]) data.peticionario_nombre = matchReclamante[1].trim();
+
+  const matchPlazo = cleanText.match(/plazo\s+máximo\s+de\s+([a-záéíóúñ\s\d]+),/i);
+  if (matchPlazo && matchPlazo[1]) data.plazo_respuesta = matchPlazo[1].trim();
+
+  const matchDir = cleanText.match(/\b([AL]\d{8})\b/g);
+  if (matchDir && matchDir.length > 0) {
+    data.codigo_dir_origen = matchDir.find(code => code.startsWith('A')) || matchDir[0];
+    data.codigo_dir_destino = matchDir.find(code => code.startsWith('L')) || (matchDir[1] ? matchDir[1] : undefined);
   }
 
-  const [, day, month, year] = match;
-  const normalizedYear = year.length === 2 ? `20${year}` : year;
-  return `${normalizedYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  return data;
 }
 
-export function extractPdfAdministrativeData(rawText: string): ExtractedPdfData {
-  const text = normalizeWhitespace(rawText);
+function normalizeExtractedValue(value?: string): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
 
-  const referencia_rcon = matchFirst(text, [
-    /\b((?:RCO|RCON|CD)-?\d{2,4}\/\d+)\b/i,
-    /\b((?:RCO|RCON|CD)\/\d{2,4}\/\d+)\b/i
-  ]);
+function pickFirstMeaningful(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const normalized = normalizeExtractedValue(value);
+    if (normalized) return normalized;
+  }
 
-  const fechaRegistroRaw = matchFirst(text, [
-    /Fecha y hora de registro[:\s]+([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4}(?:\s+[0-9]{1,2}:[0-9]{2})?)/i,
-    /Fecha de entrada[:\s]+([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i
-  ]);
+  return undefined;
+}
 
-  const peticionario_nombre = matchFirst(text, [
-    /Reclamante[:\s]+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ\s,.'-]+)/i,
-    /Representante[:\s]+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ\s,.'-]+)/i
-  ]);
+function pickLongestMeaningful(...values: Array<string | undefined>): string | undefined {
+  const normalizedValues = values
+    .map((value) => normalizeExtractedValue(value))
+    .filter((value): value is string => Boolean(value));
 
-  const plazo_respuesta = matchFirst(text, [
-    /((?:en|dentro de)\s+el\s+plazo\s+(?:m[aá]ximo\s+)?de\s+[^.]+(?:mes|meses|d[ií]as))/i,
-    /(plazo\s+(?:m[aá]ximo\s+)?de\s+[^.]+(?:mes|meses|d[ií]as))/i
-  ]);
+  if (normalizedValues.length === 0) {
+    return undefined;
+  }
 
-  return {
-    referencia_rcon,
-    fecha_registro: fechaRegistroRaw ? normalizeExtractedDate(fechaRegistroRaw) : '',
-    peticionario_nombre,
-    plazo_respuesta,
-    codigo_dir_origen: findCodeNearSection(text, 'Origen'),
-    codigo_dir_destino: findCodeNearSection(text, 'Destino')
-  };
+  return normalizedValues.sort((left, right) => right.length - left.length)[0];
 }
 
 export function mergeExtractedPdfData(items: ExtractedPdfData[]): ExtractedPdfData {
   return items.reduce<ExtractedPdfData>(
     (accumulator, item) => ({
-      referencia_rcon: pickFirstMeaningful(
-        accumulator.referencia_rcon,
-        item.referencia_rcon
-      ),
-      fecha_registro: pickFirstMeaningful(
-        accumulator.fecha_registro,
-        item.fecha_registro
-      ),
+      numero_rcon: pickFirstMeaningful(accumulator.numero_rcon, item.numero_rcon),
+      numero_externo: pickFirstMeaningful(accumulator.numero_externo, item.numero_externo),
+      fecha_solicitud: pickFirstMeaningful(accumulator.fecha_solicitud, item.fecha_solicitud),
+      fecha_firma: pickFirstMeaningful(accumulator.fecha_firma, item.fecha_firma),
+      asunto: pickLongestMeaningful(accumulator.asunto, item.asunto),
       peticionario_nombre: pickLongestMeaningful(
         accumulator.peticionario_nombre,
         item.peticionario_nombre
       ),
-      plazo_respuesta: pickLongestMeaningful(
-        accumulator.plazo_respuesta,
-        item.plazo_respuesta
+      entidad_reclamada: pickLongestMeaningful(
+        accumulator.entidad_reclamada,
+        item.entidad_reclamada
       ),
+      motivo_reclamacion: pickLongestMeaningful(
+        accumulator.motivo_reclamacion,
+        item.motivo_reclamacion
+      ),
+      plazo_respuesta: pickLongestMeaningful(accumulator.plazo_respuesta, item.plazo_respuesta),
       codigo_dir_origen: pickFirstMeaningful(
         accumulator.codigo_dir_origen,
         item.codigo_dir_origen
@@ -114,15 +119,10 @@ export function mergeExtractedPdfData(items: ExtractedPdfData[]): ExtractedPdfDa
       codigo_dir_destino: pickFirstMeaningful(
         accumulator.codigo_dir_destino,
         item.codigo_dir_destino
-      )
+      ),
+      csv: pickFirstMeaningful(accumulator.csv, item.csv),
+      url_validacion: pickFirstMeaningful(accumulator.url_validacion, item.url_validacion)
     }),
-    {
-      referencia_rcon: '',
-      fecha_registro: '',
-      peticionario_nombre: '',
-      plazo_respuesta: '',
-      codigo_dir_origen: '',
-      codigo_dir_destino: ''
-    }
+    {}
   );
 }

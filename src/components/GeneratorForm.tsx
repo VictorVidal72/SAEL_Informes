@@ -2,7 +2,7 @@ import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Controller, useFieldArray, useForm, type Control } from 'react-hook-form';
-import RemisionPDF from './RemisionPDF';
+import OficioRemisionPDF from './OficioRemisionPDF';
 import ReportPDF from './ReportPDF';
 import {
   applyExpedienteToForm,
@@ -24,6 +24,7 @@ import {
 import { reportFormSchema } from '../lib/report-validation';
 import { inferirTratamiento } from '../lib/string-utils';
 import { generarYGuardarPDF } from '../services/pdf-documents.service';
+import { downloadEditablePack } from '../services/word-generator';
 import {
   extractPdfSourceDocuments,
   uploadPdfSourceDocuments,
@@ -31,9 +32,10 @@ import {
 } from '../services/pdf-source-documents.service';
 import {
   fetchAyuntamientoBundle,
-  fetchAyuntamientos
+  fetchAyuntamientos,
+  fetchNormativasForForm
 } from '../services/report-data.service';
-import type { AyuntamientoRow, ExpedienteRow } from '../lib/supabase';
+import type { AyuntamientoRow, ExpedienteRow, NormativaRow } from '../lib/supabase';
 
 type ManualEditMap = Partial<Record<DbManagedField, boolean>>;
 type PreviewMode = 'report' | 'remision' | null;
@@ -44,9 +46,16 @@ type ToastState = {
 };
 type HighlightableField =
   | 'numeroRcon'
+  | 'numeroExterno'
+  | 'asunto'
   | 'fechaSolicitud'
+  | 'fecha_firma'
   | 'plazo_respuesta'
   | 'peticionario_nombre'
+  | 'entidad_reclamada'
+  | 'motivo_reclamacion'
+  | 'csv'
+  | 'url_validacion'
   | 'codigoDir3'
   | 'instrucciones_contestar';
 
@@ -61,6 +70,29 @@ function createLoadedFieldSet(values: ReportFormData): Set<DbManagedField> {
   return new Set(
     DB_MANAGED_FIELDS.filter((field) => values[field].trim() !== '')
   );
+}
+
+function normalizePdfDateForInput(value: string): string {
+  const trimmedValue = value.trim();
+  const dayFirstMatch = trimmedValue.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+
+  if (dayFirstMatch) {
+    const [, day, month, year] = dayFirstMatch;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  return trimmedValue;
+}
+
+function buildSuggestedAsuntoFromMotivo(motivo: string): string {
+  const words = motivo
+    .trim()
+    .replace(/[.;:,]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 12);
+
+  return words.join(' ');
 }
 
 function ayuntamientoLabel(item: AyuntamientoRow): string {
@@ -194,9 +226,11 @@ function DynamicSection({
 }
 
 function NormativasOpcionalesGroup({
-  control
+  control,
+  options
 }: {
   control: Control<ReportFormData>;
+  options: Array<{ nombre: string; nombreCompleto: string }>;
 }) {
   return (
     <Controller
@@ -206,11 +240,12 @@ function NormativasOpcionalesGroup({
         <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 p-4 md:col-span-2">
           <p className="text-sm font-medium text-slate-700">{FIELD_LABELS.normativasOpcionales}</p>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {NORMATIVAS_OPCIONALES.map((option) => {
-              const checked = field.value.includes(option);
+            {options.map((option) => {
+              const checked = field.value.includes(option.nombre);
               return (
                 <label
-                  key={option}
+                  key={option.nombre}
+                  title={option.nombreCompleto}
                   className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
                 >
                   <input
@@ -218,17 +253,30 @@ function NormativasOpcionalesGroup({
                     checked={checked}
                     onChange={(event) => {
                       const nextValues = event.target.checked
-                        ? [...field.value, option]
-                        : field.value.filter((item) => item !== option);
+                        ? [...field.value, option.nombre]
+                        : field.value.filter((item) => item !== option.nombre);
                       field.onChange(nextValues);
                     }}
                     className="h-4 w-4 rounded border-slate-300 text-[#16324f] focus:ring-[#16324f]"
                   />
-                  {option}
+                  <span className="font-semibold">{option.nombre}</span>
                 </label>
               );
             })}
           </div>
+          {field.value.length > 0 ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+              {field.value.map((selected) => {
+                const selectedOption = options.find((item) => item.nombre === selected);
+                return (
+                  <p key={selected} className="mb-1 last:mb-0">
+                    <span className="font-semibold text-slate-800">{selected}:</span>{' '}
+                    {selectedOption?.nombreCompleto || selected}
+                  </p>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       )}
     />
@@ -239,6 +287,7 @@ export default function GeneratorForm() {
   const [isClient, setIsClient] = useState(false);
   const [ayuntamientos, setAyuntamientos] = useState<AyuntamientoRow[]>([]);
   const [expedientes, setExpedientes] = useState<ExpedienteRow[]>([]);
+  const [normativasCatalog, setNormativasCatalog] = useState<NormativaRow[]>([]);
   const [manualEdits, setManualEdits] = useState<ManualEditMap>(createManualEditMap);
   const [dbLoadedFields, setDbLoadedFields] = useState<Set<DbManagedField>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
@@ -247,6 +296,7 @@ export default function GeneratorForm() {
   const [isLoadingRelations, setIsLoadingRelations] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingDocx, setIsGeneratingDocx] = useState(false);
   const [generatingDocumentName, setGeneratingDocumentName] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [isAnalyzingPdf, setIsAnalyzingPdf] = useState(false);
@@ -337,6 +387,28 @@ export default function GeneratorForm() {
     }
 
     void loadAyuntamientos();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNormativas() {
+      try {
+        const data = await fetchNormativasForForm();
+        if (!cancelled) {
+          setNormativasCatalog(data);
+        }
+      } catch {
+        if (!cancelled) {
+          setNormativasCatalog([]);
+        }
+      }
+    }
+
+    void loadNormativas();
     return () => {
       cancelled = true;
     };
@@ -444,6 +516,20 @@ export default function GeneratorForm() {
       .includes(normalized);
   });
 
+  const normativaSelectableOptions = useMemo(() => {
+    if (normativasCatalog.length === 0) {
+      return NORMATIVAS_OPCIONALES.map((item) => ({
+        nombre: item,
+        nombreCompleto: item
+      }));
+    }
+
+    return normativasCatalog.map((item) => ({
+      nombre: item.Nombre,
+      nombreCompleto: item.Nombre_completo?.trim() || item.Nombre
+    }));
+  }, [normativasCatalog]);
+
   function toggleManual(field: DbManagedField) {
     setManualEdits((current) => ({ ...current, [field]: !current[field] }));
   }
@@ -528,22 +614,44 @@ export default function GeneratorForm() {
       const fieldsToHighlight: HighlightableField[] = [];
       const mappedValues: Partial<Record<HighlightableField, string>> = {};
 
-      if (payload.referencia_rcon) {
+      if (payload.numero_rcon) {
         applyAutofillValue(
           'numeroRcon',
-          payload.referencia_rcon,
+          payload.numero_rcon,
           mappedValues,
           fieldsToHighlight
         );
       }
 
-      if (payload.fecha_registro) {
+      if (payload.numero_externo) {
         applyAutofillValue(
-          'fechaSolicitud',
-          payload.fecha_registro,
+          'numeroExterno',
+          payload.numero_externo,
           mappedValues,
           fieldsToHighlight
         );
+      }
+
+      if (payload.fecha_solicitud) {
+        applyAutofillValue(
+          'fechaSolicitud',
+          normalizePdfDateForInput(payload.fecha_solicitud),
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.fecha_firma) {
+        applyAutofillValue(
+          'fecha_firma',
+          normalizePdfDateForInput(payload.fecha_firma),
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.asunto) {
+        applyAutofillValue('asunto', payload.asunto, mappedValues, fieldsToHighlight);
       }
 
       if (payload.plazo_respuesta) {
@@ -568,6 +676,45 @@ export default function GeneratorForm() {
         applyAutofillValue(
           'codigoDir3',
           payload.codigo_dir_destino,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.entidad_reclamada) {
+        applyAutofillValue(
+          'entidad_reclamada',
+          payload.entidad_reclamada,
+          mappedValues,
+          fieldsToHighlight
+        );
+      }
+
+      if (payload.motivo_reclamacion) {
+        applyAutofillValue(
+          'motivo_reclamacion',
+          payload.motivo_reclamacion,
+          mappedValues,
+          fieldsToHighlight
+        );
+
+        const suggestedAsunto = buildSuggestedAsuntoFromMotivo(payload.motivo_reclamacion);
+        const hasAsuntoFromPdf = Boolean(payload.asunto?.trim());
+        const currentAsunto = getValues('asunto').trim();
+
+        if (!hasAsuntoFromPdf && suggestedAsunto && !currentAsunto) {
+          applyAutofillValue('asunto', suggestedAsunto, mappedValues, fieldsToHighlight);
+        }
+      }
+
+      if (payload.csv) {
+        applyAutofillValue('csv', payload.csv, mappedValues, fieldsToHighlight);
+      }
+
+      if (payload.url_validacion) {
+        applyAutofillValue(
+          'url_validacion',
+          payload.url_validacion,
           mappedValues,
           fieldsToHighlight
         );
@@ -645,7 +792,7 @@ export default function GeneratorForm() {
       window.open(publicResult.publicUrl, '_blank', 'noopener,noreferrer');
       setToast({
         type: 'success',
-        message: `${nombreDocumento} generado y guardado correctamente.`
+        message: 'Informe guardado correctamente en Supabase'
       });
     } catch (error) {
       setToast({
@@ -656,6 +803,34 @@ export default function GeneratorForm() {
     } finally {
       setIsGenerating(false);
       setGeneratingDocumentName(null);
+    }
+  }
+
+  async function handleDownloadEditablePack() {
+    const isValidForm = await trigger();
+    if (!isValidForm) {
+      setToast({
+        type: 'error',
+        message: 'Revisa el formulario antes de descargar el pack editable.'
+      });
+      return;
+    }
+
+    try {
+      setIsGeneratingDocx(true);
+      await downloadEditablePack(getValues());
+      setToast({
+        type: 'success',
+        message: 'Pack editable (.docx) generado correctamente.'
+      });
+    } catch (error) {
+      setToast({
+        type: 'error',
+        message:
+          error instanceof Error ? error.message : 'No se pudo generar el pack editable.'
+      });
+    } finally {
+      setIsGeneratingDocx(false);
     }
   }
 
@@ -816,6 +991,21 @@ export default function GeneratorForm() {
                   />
                 </label>
               </div>
+
+              <label className="mt-4 space-y-2">
+                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.asunto}</span>
+                <input
+                  {...register('asunto')}
+                  className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                    Boolean(errors.asunto),
+                    highlightedFields.has('asunto')
+                  )}`}
+                  placeholder="Resumen breve del asunto del informe"
+                />
+                {errors.asunto ? (
+                  <p className="text-xs font-medium text-red-600">{errors.asunto.message}</p>
+                ) : null}
+              </label>
 
               <div className="mt-4 rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50 p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -989,6 +1179,48 @@ export default function GeneratorForm() {
                     ) : null}
                   </label>
 
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">
+                      {FIELD_LABELS.fecha_firma}
+                    </span>
+                    <input
+                      type="date"
+                      {...register('fecha_firma')}
+                      className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                        Boolean(errors.fecha_firma),
+                        highlightedFields.has('fecha_firma')
+                      )}`}
+                    />
+                  </label>
+
+                  <label className="space-y-2 md:col-span-2">
+                    <span className="text-sm font-medium text-slate-700">
+                      {FIELD_LABELS.entidad_reclamada}
+                    </span>
+                    <input
+                      {...register('entidad_reclamada')}
+                      className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                        Boolean(errors.entidad_reclamada),
+                        highlightedFields.has('entidad_reclamada')
+                      )}`}
+                      placeholder="Entidad reclamada detectada o editable manualmente"
+                    />
+                  </label>
+
+                  <label className="space-y-2 md:col-span-2">
+                    <span className="text-sm font-medium text-slate-700">
+                      {FIELD_LABELS.motivo_reclamacion}
+                    </span>
+                    <textarea
+                      {...register('motivo_reclamacion')}
+                      className={`min-h-32 w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                        Boolean(errors.motivo_reclamacion),
+                        highlightedFields.has('motivo_reclamacion')
+                      )}`}
+                      placeholder="Detalle del motivo de la reclamacion"
+                    />
+                  </label>
+
                   <label className="space-y-2 md:col-span-2">
                     <span className="text-sm font-medium text-slate-700">
                       {FIELD_LABELS.instrucciones_contestar}
@@ -1002,6 +1234,37 @@ export default function GeneratorForm() {
                       placeholder="Resume aqui las instrucciones para contestar el expediente."
                     />
                   </label>
+                </div>
+
+                <div className="mt-4 rounded-[1.25rem] border border-slate-200 bg-white p-4">
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-[#16324f]">
+                    Datos de Verificacion (Opcional)
+                  </h3>
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.csv}</span>
+                      <input
+                        {...register('csv')}
+                        className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                          Boolean(errors.csv),
+                          highlightedFields.has('csv')
+                        )}`}
+                      />
+                    </label>
+
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        {FIELD_LABELS.url_validacion}
+                      </span>
+                      <input
+                        {...register('url_validacion')}
+                        className={`w-full rounded-2xl border px-4 py-3 text-sm shadow-sm outline-none transition ${getFieldClass(
+                          Boolean(errors.url_validacion),
+                          highlightedFields.has('url_validacion')
+                        )}`}
+                      />
+                    </label>
+                  </div>
                 </div>
 
                 <details className="mt-4 overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white">
@@ -1247,13 +1510,6 @@ export default function GeneratorForm() {
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
                 />
               </label>
-              <label className="space-y-2 md:col-span-2">
-                <span className="text-sm font-medium text-slate-700">{FIELD_LABELS.asunto}</span>
-                <input
-                  {...register('asunto')}
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#16324f] focus:ring-4 focus:ring-slate-200"
-                />
-              </label>
               <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-sm font-medium text-slate-700">Firmantes incluidos</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -1297,7 +1553,10 @@ export default function GeneratorForm() {
                 />
               </label>
 
-              <NormativasOpcionalesGroup control={control} />
+              <NormativasOpcionalesGroup
+                control={control}
+                options={normativaSelectableOptions}
+              />
 
               <label className="space-y-2 md:col-span-2">
                 <span className="text-sm font-medium text-slate-700">
@@ -1403,7 +1662,7 @@ export default function GeneratorForm() {
               >
                 {isGenerating && generatingDocumentName === 'Informe_DPD'
                   ? 'Generando Informe DPD...'
-                  : 'Generar Informe DPD (PDF)'}
+                  : 'Generar Informe (PDF)'}
               </button>
 
               {showRemisionAction ? (
@@ -1412,7 +1671,7 @@ export default function GeneratorForm() {
                   disabled={!canGenerate || isGenerating}
                   onClick={() =>
                     void handleGenerateDocument(
-                      <RemisionPDF payload={remisionPayload} />,
+                      <OficioRemisionPDF payload={remisionPayload} />,
                       'Oficio_Remision'
                     )
                   }
@@ -1420,9 +1679,20 @@ export default function GeneratorForm() {
                 >
                   {isGenerating && generatingDocumentName === 'Oficio_Remision'
                     ? 'Generando Oficio de Remision...'
-                    : 'Generar Oficio de Remision (PDF)'}
+                    : 'Descargar Oficio (PDF)'}
                 </button>
               ) : null}
+
+              <button
+                type="button"
+                disabled={!canGenerate || isGeneratingDocx}
+                onClick={() => void handleDownloadEditablePack()}
+                className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-[#16324f] transition enabled:hover:bg-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
+              >
+                {isGeneratingDocx
+                  ? 'Generando Pack Editable...'
+                  : 'Descargar Pack Editable (.docx)'}
+              </button>
             </div>
 
             <textarea
@@ -1453,7 +1723,7 @@ export default function GeneratorForm() {
                     previewMode === 'report' ? (
                       <ReportPDF payload={reportPayload} />
                     ) : (
-                      <RemisionPDF payload={remisionPayload} />
+                      <OficioRemisionPDF payload={remisionPayload} />
                     )
                   }
                   fileName={`${previewMode}-${values.municipio || 'SAEL'}.pdf`}
@@ -1476,7 +1746,7 @@ export default function GeneratorForm() {
                 {previewMode === 'report' ? (
                   <ReportPDF payload={reportPayload} />
                 ) : (
-                  <RemisionPDF payload={remisionPayload} />
+                  <OficioRemisionPDF payload={remisionPayload} />
                 )}
               </PDFViewer>
             </div>

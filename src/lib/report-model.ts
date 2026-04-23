@@ -41,7 +41,12 @@ export interface ReportFormData {
   numeroRcon: string;
   fechaSolicitud: string;
   fechaResolucion: string;
+  fecha_firma?: string;
   plazo_respuesta: string;
+  entidad_reclamada?: string;
+  motivo_reclamacion?: string;
+  csv?: string;
+  url_validacion?: string;
   instrucciones_contestar: string;
   peticionario_nombre: string;
   peticionario_apellidos: string;
@@ -50,7 +55,7 @@ export interface ReportFormData {
   peticionario_puesto: string;
   servicio: string;
   area: string;
-  asunto: string;
+  asunto?: string;
   medioSolicitud: string;
   municipio: string;
   cif: string;
@@ -117,7 +122,12 @@ export const FIELD_LABELS: Record<keyof ReportFormData, string> = {
   numeroRcon: 'Numero RCON',
   fechaSolicitud: 'Fecha de solicitud',
   fechaResolucion: 'Fecha de resolucion',
+  fecha_firma: 'Fecha de firma',
   plazo_respuesta: 'Plazo de respuesta',
+  entidad_reclamada: 'Entidad reclamada',
+  motivo_reclamacion: 'Motivo de la reclamacion',
+  csv: 'CSV',
+  url_validacion: 'URL de validacion',
   instrucciones_contestar: 'Instrucciones para contestar',
   peticionario_nombre: 'Peticionario nombre',
   peticionario_apellidos: 'Peticionario apellidos',
@@ -163,7 +173,12 @@ export function createEmptyReportForm(): ReportFormData {
     numeroRcon: '',
     fechaSolicitud: '',
     fechaResolucion: '',
+    fecha_firma: '',
     plazo_respuesta: '',
+    entidad_reclamada: '',
+    motivo_reclamacion: '',
+    csv: '',
+    url_validacion: '',
     instrucciones_contestar: '',
     peticionario_nombre: '',
     peticionario_apellidos: '',
@@ -364,7 +379,12 @@ export function mapDbDataToForm(
     numeroSael: normalizeText(expediente?.num_expediente_sael),
     numeroRcon: normalizeText(expediente?.num_expediente_rcon),
     fechaSolicitud: formatInputDate(expediente?.fecha_solicitud),
-    fechaResolucion: formatInputDate(expediente?.fecha_resolucion)
+    fechaResolucion: formatInputDate(expediente?.fecha_resolucion),
+    fecha_firma: currentValues.fecha_firma,
+    entidad_reclamada: currentValues.entidad_reclamada,
+    motivo_reclamacion: currentValues.motivo_reclamacion,
+    csv: currentValues.csv,
+    url_validacion: currentValues.url_validacion
   };
 }
 
@@ -382,7 +402,12 @@ export function applyExpedienteToForm(
     numeroRcon: normalizeText(expediente?.num_expediente_rcon),
     fechaSolicitud: formatInputDate(expediente?.fecha_solicitud),
     fechaResolucion: formatInputDate(expediente?.fecha_resolucion),
+    fecha_firma: currentValues.fecha_firma,
     plazo_respuesta: normalizeText(expediente?.plazo_respuesta) || currentValues.plazo_respuesta,
+    entidad_reclamada: currentValues.entidad_reclamada,
+    motivo_reclamacion: currentValues.motivo_reclamacion,
+    csv: currentValues.csv,
+    url_validacion: currentValues.url_validacion,
     instrucciones_contestar:
       normalizeText(expediente?.instrucciones_contestar) || currentValues.instrucciones_contestar,
     peticionario_nombre:
@@ -432,7 +457,6 @@ export function getRequiredFieldsByTramite(
     'numeroInforme',
     'fechaSolicitud',
     'medioSolicitud',
-    'asunto',
     'antecedentesHecho',
     'fundamentosDerecho',
     'conclusiones'
@@ -486,6 +510,7 @@ export function buildChecklist(
 export function buildReportPreview(values: ReportFormData): string {
   const applicant = buildApplicantFullName(values);
   const signatureCode = buildSignatureCode(values);
+  const asunto = values.asunto?.trim() || '(Sin asunto)';
   const introduction = requiresRemisionDocument(values)
     ? `Recibida peticion mediante ${values.medioSolicitud} de fecha ${formatDisplayDate(values.fechaSolicitud)} de ${applicant} del ${values.servicio} del Area de ${values.area} del Ayuntamiento de ${values.municipio}, solicitando asistencia tecnica en materia de Proteccion de Datos.`
     : `Se emite informe en relacion con el expediente ${values.numeroSael} del Ayuntamiento de ${values.municipio}.`;
@@ -497,7 +522,7 @@ Nº Expediente SAEL: ${values.numeroSael}
 Nº Expediente Externo: ${values.numeroExterno}
 Nº Expediente RCON: ${values.numeroRcon}
 
-ASUNTO: Informe sobre ${values.asunto}.
+ASUNTO: Informe sobre ${asunto}.
 
 ${introduction}
 

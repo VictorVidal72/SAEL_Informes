@@ -23,8 +23,17 @@ export async function generarYGuardarPDF({
   nombreDocumento,
   formData
 }: GenerarYGuardarPdfParams): Promise<GeneratedPdfResult> {
+  const formPayload: ReportFormData = {
+    ...formData,
+    asunto: formData.asunto ?? '',
+    fecha_firma: formData.fecha_firma ?? '',
+    entidad_reclamada: formData.entidad_reclamada ?? '',
+    motivo_reclamacion: formData.motivo_reclamacion ?? '',
+    csv: formData.csv ?? '',
+    url_validacion: formData.url_validacion ?? ''
+  };
   const blob = await pdf(pdfComponent as ReactPDF.Node).toBlob();
-  const expedienteId = formData.expedienteId.trim();
+  const expedienteId = formPayload.expedienteId.trim();
   const expedienteIdForDb = expedienteId === '' ? null : expedienteId;
   const expedienteSegment = expedienteIdForDb ?? 'sin-expediente';
   const fileName = `${nombreDocumento}_${expedienteSegment}_${Date.now()}.pdf`;
@@ -52,10 +61,10 @@ export async function generarYGuardarPDF({
   const { error: insertError } = await supabase.from('Informe').insert({
     expediente_id: expedienteIdForDb,
     nombre_informe: nombreDocumento,
-    datos_formulario: formData,
+    datos_formulario: formPayload,
     pdf_url: publicUrl,
-    requiere_oficio_remision: requiresRemisionDocument(formData),
-    iniciales_firmantes: buildSignatureCode(formData)
+    requiere_oficio_remision: requiresRemisionDocument(formPayload),
+    iniciales_firmantes: buildSignatureCode(formPayload)
   });
 
   if (insertError) {
